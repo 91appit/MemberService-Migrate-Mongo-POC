@@ -13,7 +13,7 @@ Before you begin, ensure you have the following installed:
 ## Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/91appit/MemberService-Migrate-Mongo-POC.git
+git clone <repository-url>
 cd MemberService-Migrate-Mongo-POC
 ```
 
@@ -172,6 +172,13 @@ To switch from Embedding to Referencing mode (or vice versa):
 **"Table does not exist" Error:**
 - Ensure the PostgreSQL database has the `members` and `bundles` tables
 - Verify the database name in the connection string
+- The required schema is documented in the main [README.md](README.md) under "PostgreSQL Schema"
+
+**Important**: Your PostgreSQL database must have the following tables:
+- `members` table with columns: id, password, salt, tenant_id, state, allow_login, extensions, create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
+- `bundles` table with columns: id, key, type, tenant_id, extensions, member_id, create_at, create_user, update_at, update_user
+
+See the complete DDL in the [README.md](README.md) for exact schema definitions.
 
 **"Out of Memory" Error:**
 - Reduce the `BatchSize` in `appsettings.json` (try 100 or 500)

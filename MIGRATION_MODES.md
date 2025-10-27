@@ -94,6 +94,7 @@ On `members` collection:
 
 ```javascript
 // Get member with all bundles
+// Note: _id is stored as a string representation of the UUID
 db.members.findOne({ _id: "550e8400-e29b-41d4-a716-446655440000" })
 
 // Get members with specific bundle type
@@ -169,7 +170,7 @@ On `bundles` collection:
 - `ix_bundles_member_id`: For looking up bundles by member
 - `ix_bundles_tenant_id`: For filtering by tenant
 - `ix_bundles_update_at`: For temporal queries
-- `ix_bundles_key_tenant_id_type` (unique): Ensures unique bundle keys per tenant and type
+- `ix_bundles_key_tenant_id_type` (unique, compound): Composite index on (key, tenant_id, type) to ensure unique bundle keys per tenant and type combination
 
 ### Advantages
 
