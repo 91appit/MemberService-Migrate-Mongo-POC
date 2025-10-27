@@ -42,8 +42,22 @@ MemberServiceMigration/
 ## Prerequisites
 
 - .NET 8 SDK
+- Visual Studio 2022 or later (optional, for GUI development)
 - PostgreSQL database with `members` and `bundles` tables
 - MongoDB instance
+
+## Opening the Project
+
+### Using Visual Studio
+1. Open `MemberServiceMigration.sln` in Visual Studio
+2. The solution will automatically restore NuGet packages
+3. Press F5 to run or Ctrl+Shift+B to build
+
+### Using Command Line
+```bash
+dotnet build MemberServiceMigration.sln
+dotnet run --project MemberServiceMigration
+```
 
 ## Configuration
 
@@ -128,16 +142,22 @@ In this mode, bundles are stored in a separate collection with references to mem
 
 ## Usage
 
+### Using Visual Studio
+1. Open `MemberServiceMigration.sln` in Visual Studio
+2. Update the configuration in `appsettings.json`
+3. Press F5 to run the application
+
+### Using Command Line
 1. **Build the project:**
    ```bash
-   dotnet build
+   dotnet build MemberServiceMigration.sln
    ```
 
 2. **Update the configuration in `appsettings.json`**
 
 3. **Run the migration:**
    ```bash
-   dotnet run
+   dotnet run --project MemberServiceMigration
    ```
 
 ## PostgreSQL Schema
