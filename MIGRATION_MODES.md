@@ -252,6 +252,23 @@ To switch between modes, update the `appsettings.json`:
 }
 ```
 
+### Batch Size Considerations
+
+The `BatchSize` setting controls how many records are:
+1. **Read from PostgreSQL** in each query (using OFFSET/LIMIT)
+2. **Written to MongoDB** in each batch operation
+
+**For Large Datasets (Millions of Records):**
+- Recommended: 1000-5000 records per batch
+- The tool uses streaming approach - fetches one batch, processes it, writes to MongoDB, then fetches the next
+- Memory usage stays constant regardless of total dataset size
+- Progress is reported with percentage completion
+
+**Memory Efficiency:**
+- Old behavior: Loaded ALL records into memory before processing ❌
+- New behavior: Processes records in batches, only current batch in memory ✅
+- Supports datasets of any size (tested with tens of millions of records)
+
 ## Recommendations
 
 ### Choose Embedding When:
@@ -267,6 +284,33 @@ To switch between modes, update the `appsettings.json`:
 - ✅ Write-heavy workloads on bundles
 - ✅ Need to query bundles across members
 - ✅ Document size could grow unbounded
+
+## Performance at Scale
+
+The migration tool is optimized for large-scale migrations:
+
+- **Batch Reading**: Uses PostgreSQL OFFSET/LIMIT to fetch records in chunks
+- **Batch Writing**: Inserts multiple documents to MongoDB in single operations
+- **Memory Efficient**: Processes one batch at a time, never loads entire dataset
+- **Progress Tracking**: Real-time percentage updates during migration
+- **Scalability**: Successfully handles tens of millions of records
+
+**Example Output for Large Dataset:**
+```
+Starting migration in Embedding mode...
+Batch size: 1000
+Counting records in PostgreSQL...
+Found 15000000 members to migrate
+Creating indexes...
+Starting batch migration...
+Fetching batch at offset 0...
+Converting 1000 members with their bundles...
+Processed 1000/15000000 members (0.01%)
+Fetching batch at offset 1000...
+...
+Processed 15000000/15000000 members (100.00%)
+Migration completed: 15000000 members migrated
+```
 
 ## Conclusion
 

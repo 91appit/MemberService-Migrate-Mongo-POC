@@ -11,9 +11,14 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Two Migration Modes**:
   - **Embedding Mode**: Embeds bundles data directly into member documents
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
-- **Batch Processing**: Configurable batch size for efficient data migration
+- **Batch Processing**: 
+  - Configurable batch size for efficient data migration
+  - Batch reading from PostgreSQL to handle large datasets (millions of records)
+  - Batch writing to MongoDB for optimal performance
+- **Memory Efficient**: Processes data in chunks without loading entire dataset into memory
 - **Index Creation**: Automatically creates appropriate indexes in MongoDB
 - **Data Integrity**: Ensures data consistency during migration
+- **Progress Tracking**: Real-time progress reporting with percentage completion
 - **Error Handling**: Comprehensive error handling and logging
 
 ## Project Structure

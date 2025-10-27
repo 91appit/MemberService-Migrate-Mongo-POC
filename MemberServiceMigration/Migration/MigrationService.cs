@@ -48,51 +48,68 @@ public class MigrationService
 
     private async Task MigrateEmbeddingModeAsync()
     {
-        Console.WriteLine("Fetching data from PostgreSQL...");
+        Console.WriteLine("Counting records in PostgreSQL...");
         
-        var members = await _postgreSqlRepository.GetAllMembersAsync();
-        var bundlesByMember = await _postgreSqlRepository.GetBundlesByMemberIdAsync();
-        
-        Console.WriteLine($"Found {members.Count} members and {bundlesByMember.Values.Sum(b => b.Count)} bundles");
+        var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
+        Console.WriteLine($"Found {totalMembers} members to migrate");
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         
         Console.WriteLine("Creating indexes...");
         await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
 
-        Console.WriteLine("Converting and inserting data...");
+        Console.WriteLine("Starting batch migration...");
         
-        var batches = members
-            .Select((member, index) => new { member, index })
-            .GroupBy(x => x.index / _settings.BatchSize)
-            .Select(g => g.Select(x => x.member).ToList());
-
         var processedCount = 0;
-        foreach (var batch in batches)
+        var offset = 0;
+        
+        while (offset < totalMembers)
         {
-            var documents = batch.Select(member =>
+            Console.WriteLine($"Fetching batch at offset {offset}...");
+            
+            // Fetch a batch of members
+            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(offset, _settings.BatchSize);
+            
+            if (!membersBatch.Any())
+            {
+                break;
+            }
+            
+            // Fetch bundles for this batch of members
+            var memberIds = membersBatch.Select(m => m.Id).ToList();
+            var bundlesByMember = await _postgreSqlRepository.GetBundlesByMemberIdsAsync(memberIds);
+            
+            Console.WriteLine($"Converting {membersBatch.Count} members with their bundles...");
+            
+            // Convert to MongoDB documents
+            var documents = membersBatch.Select(member =>
             {
                 bundlesByMember.TryGetValue(member.Id, out var bundles);
                 return DataConverter.ConvertToMemberDocumentEmbedding(member, bundles);
             }).ToList();
 
+            // Insert into MongoDB
             if (documents.Any())
             {
                 await membersCollection.InsertManyAsync(documents);
                 processedCount += documents.Count;
-                Console.WriteLine($"Processed {processedCount}/{members.Count} members");
+                Console.WriteLine($"Processed {processedCount}/{totalMembers} members ({(processedCount * 100.0 / totalMembers):F2}%)");
             }
+            
+            offset += _settings.BatchSize;
         }
+        
+        Console.WriteLine($"Migration completed: {processedCount} members migrated");
     }
 
     private async Task MigrateReferencingModeAsync()
     {
-        Console.WriteLine("Fetching data from PostgreSQL...");
+        Console.WriteLine("Counting records in PostgreSQL...");
         
-        var members = await _postgreSqlRepository.GetAllMembersAsync();
-        var bundles = await _postgreSqlRepository.GetAllBundlesAsync();
+        var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
+        var totalBundles = await _postgreSqlRepository.GetBundlesCountAsync();
         
-        Console.WriteLine($"Found {members.Count} members and {bundles.Count} bundles");
+        Console.WriteLine($"Found {totalMembers} members and {totalBundles} bundles to migrate");
 
         var membersCollection = _mongoDbRepository.GetMembersCollection();
         var bundlesCollection = _mongoDbRepository.GetBundlesCollection();
@@ -100,44 +117,68 @@ public class MigrationService
         Console.WriteLine("Creating indexes...");
         await _mongoDbRepository.CreateIndexesForReferencingAsync();
 
-        Console.WriteLine("Converting and inserting members...");
+        // Migrate members
+        Console.WriteLine("Starting members migration...");
         
-        var memberBatches = members
-            .Select((member, index) => new { member, index })
-            .GroupBy(x => x.index / _settings.BatchSize)
-            .Select(g => g.Select(x => x.member).ToList());
-
         var processedMemberCount = 0;
-        foreach (var batch in memberBatches)
+        var memberOffset = 0;
+        
+        while (memberOffset < totalMembers)
         {
-            var documents = batch.Select(DataConverter.ConvertToMemberDocument).ToList();
+            Console.WriteLine($"Fetching members batch at offset {memberOffset}...");
+            
+            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(memberOffset, _settings.BatchSize);
+            
+            if (!membersBatch.Any())
+            {
+                break;
+            }
+            
+            Console.WriteLine($"Converting {membersBatch.Count} members...");
+            
+            var documents = membersBatch.Select(DataConverter.ConvertToMemberDocument).ToList();
 
             if (documents.Any())
             {
                 await membersCollection.InsertManyAsync(documents);
                 processedMemberCount += documents.Count;
-                Console.WriteLine($"Processed {processedMemberCount}/{members.Count} members");
+                Console.WriteLine($"Processed {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%)");
             }
+            
+            memberOffset += _settings.BatchSize;
         }
 
-        Console.WriteLine("Converting and inserting bundles...");
+        // Migrate bundles
+        Console.WriteLine("Starting bundles migration...");
         
-        var bundleBatches = bundles
-            .Select((bundle, index) => new { bundle, index })
-            .GroupBy(x => x.index / _settings.BatchSize)
-            .Select(g => g.Select(x => x.bundle).ToList());
-
         var processedBundleCount = 0;
-        foreach (var batch in bundleBatches)
+        var bundleOffset = 0;
+        
+        while (bundleOffset < totalBundles)
         {
-            var documents = batch.Select(DataConverter.ConvertToBundleDocument).ToList();
+            Console.WriteLine($"Fetching bundles batch at offset {bundleOffset}...");
+            
+            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(bundleOffset, _settings.BatchSize);
+            
+            if (!bundlesBatch.Any())
+            {
+                break;
+            }
+            
+            Console.WriteLine($"Converting {bundlesBatch.Count} bundles...");
+            
+            var documents = bundlesBatch.Select(DataConverter.ConvertToBundleDocument).ToList();
 
             if (documents.Any())
             {
                 await bundlesCollection.InsertManyAsync(documents);
                 processedBundleCount += documents.Count;
-                Console.WriteLine($"Processed {processedBundleCount}/{bundles.Count} bundles");
+                Console.WriteLine($"Processed {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%)");
             }
+            
+            bundleOffset += _settings.BatchSize;
         }
+        
+        Console.WriteLine($"Migration completed: {processedMemberCount} members and {processedBundleCount} bundles migrated");
     }
 }

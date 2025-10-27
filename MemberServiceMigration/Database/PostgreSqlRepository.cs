@@ -13,7 +13,31 @@ public class PostgreSqlRepository
         _connectionString = connectionString;
     }
 
-    public async Task<List<Member>> GetAllMembersAsync()
+    public async Task<long> GetMembersCountAsync()
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        
+        var query = "SELECT COUNT(*) FROM members";
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
+    }
+
+    public async Task<long> GetBundlesCountAsync()
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        
+        var query = "SELECT COUNT(*) FROM bundles";
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
+    }
+
+    public async Task<List<Member>> GetMembersBatchAsync(int offset, int limit)
     {
         var members = new List<Member>();
         
@@ -23,9 +47,14 @@ public class PostgreSqlRepository
         var query = @"
             SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
                    create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
-            FROM members";
+            FROM members
+            ORDER BY id
+            LIMIT @limit OFFSET @offset";
         
         await using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("limit", limit);
+        command.Parameters.AddWithValue("offset", offset);
+        
         await using var reader = await command.ExecuteReaderAsync();
         
         while (await reader.ReadAsync())
@@ -55,7 +84,7 @@ public class PostgreSqlRepository
         return members;
     }
 
-    public async Task<List<Bundle>> GetAllBundlesAsync()
+    public async Task<List<Bundle>> GetBundlesBatchAsync(int offset, int limit)
     {
         var bundles = new List<Bundle>();
         
@@ -65,9 +94,14 @@ public class PostgreSqlRepository
         var query = @"
             SELECT id, key, type, tenant_id, extensions, member_id, 
                    create_at, create_user, update_at, update_user
-            FROM bundles";
+            FROM bundles
+            ORDER BY id
+            LIMIT @limit OFFSET @offset";
         
         await using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("limit", limit);
+        command.Parameters.AddWithValue("offset", offset);
+        
         await using var reader = await command.ExecuteReaderAsync();
         
         while (await reader.ReadAsync())
@@ -92,9 +126,14 @@ public class PostgreSqlRepository
         return bundles;
     }
 
-    public async Task<Dictionary<Guid, List<Bundle>>> GetBundlesByMemberIdAsync()
+    public async Task<Dictionary<Guid, List<Bundle>>> GetBundlesByMemberIdsAsync(List<Guid> memberIds)
     {
         var bundlesByMember = new Dictionary<Guid, List<Bundle>>();
+        
+        if (memberIds == null || !memberIds.Any())
+        {
+            return bundlesByMember;
+        }
         
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
@@ -103,9 +142,12 @@ public class PostgreSqlRepository
             SELECT id, key, type, tenant_id, extensions, member_id, 
                    create_at, create_user, update_at, update_user
             FROM bundles
+            WHERE member_id = ANY(@memberIds)
             ORDER BY member_id";
         
         await using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("memberIds", memberIds.ToArray());
+        
         await using var reader = await command.ExecuteReaderAsync();
         
         while (await reader.ReadAsync())
