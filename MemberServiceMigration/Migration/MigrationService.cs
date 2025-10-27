@@ -58,17 +58,17 @@ public class MigrationService
         Console.WriteLine("Creating indexes...");
         await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
 
-        Console.WriteLine("Starting batch migration...");
+        Console.WriteLine("Starting batch migration with cursor pagination...");
         
         var processedCount = 0;
-        var offset = 0;
+        Guid? lastMemberId = null;
         
-        while (offset < totalMembers)
+        while (true)
         {
-            Console.WriteLine($"Fetching batch at offset {offset}...");
+            Console.WriteLine($"Fetching batch using cursor (last ID: {lastMemberId?.ToString() ?? "START"})...");
             
-            // Fetch a batch of members
-            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(offset, _settings.BatchSize);
+            // Fetch a batch of members using cursor pagination
+            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
             
             if (!membersBatch.Any())
             {
@@ -96,7 +96,8 @@ public class MigrationService
                 Console.WriteLine($"Processed {processedCount}/{totalMembers} members ({(processedCount * 100.0 / totalMembers):F2}%)");
             }
             
-            offset += _settings.BatchSize;
+            // Update cursor to the last member ID in this batch
+            lastMemberId = membersBatch.Last().Id;
         }
         
         Console.WriteLine($"Migration completed: {processedCount} members migrated");
@@ -118,16 +119,16 @@ public class MigrationService
         await _mongoDbRepository.CreateIndexesForReferencingAsync();
 
         // Migrate members
-        Console.WriteLine("Starting members migration...");
+        Console.WriteLine("Starting members migration with cursor pagination...");
         
         var processedMemberCount = 0;
-        var memberOffset = 0;
+        Guid? lastMemberId = null;
         
-        while (memberOffset < totalMembers)
+        while (true)
         {
-            Console.WriteLine($"Fetching members batch at offset {memberOffset}...");
+            Console.WriteLine($"Fetching members batch using cursor (last ID: {lastMemberId?.ToString() ?? "START"})...");
             
-            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(memberOffset, _settings.BatchSize);
+            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
             
             if (!membersBatch.Any())
             {
@@ -145,20 +146,21 @@ public class MigrationService
                 Console.WriteLine($"Processed {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%)");
             }
             
-            memberOffset += _settings.BatchSize;
+            // Update cursor to the last member ID in this batch
+            lastMemberId = membersBatch.Last().Id;
         }
 
         // Migrate bundles
-        Console.WriteLine("Starting bundles migration...");
+        Console.WriteLine("Starting bundles migration with cursor pagination...");
         
         var processedBundleCount = 0;
-        var bundleOffset = 0;
+        long? lastBundleId = null;
         
-        while (bundleOffset < totalBundles)
+        while (true)
         {
-            Console.WriteLine($"Fetching bundles batch at offset {bundleOffset}...");
+            Console.WriteLine($"Fetching bundles batch using cursor (last ID: {lastBundleId?.ToString() ?? "START"})...");
             
-            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(bundleOffset, _settings.BatchSize);
+            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
             
             if (!bundlesBatch.Any())
             {
@@ -176,7 +178,8 @@ public class MigrationService
                 Console.WriteLine($"Processed {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%)");
             }
             
-            bundleOffset += _settings.BatchSize;
+            // Update cursor to the last bundle ID in this batch
+            lastBundleId = bundlesBatch.Last().Id;
         }
         
         Console.WriteLine($"Migration completed: {processedMemberCount} members and {processedBundleCount} bundles migrated");

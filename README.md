@@ -11,6 +11,10 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Two Migration Modes**:
   - **Embedding Mode**: Embeds bundles data directly into member documents
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
+- **Cursor-Based Pagination**: 
+  - Uses efficient cursor pagination (`id > last_id`) instead of OFFSET/LIMIT
+  - Consistent query performance regardless of dataset size or position
+  - Leverages primary key indexes for optimal speed
 - **Batch Processing**: 
   - Configurable batch size for efficient data migration
   - Batch reading from PostgreSQL to handle large datasets (millions of records)

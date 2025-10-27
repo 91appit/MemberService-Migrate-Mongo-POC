@@ -255,14 +255,20 @@ To switch between modes, update the `appsettings.json`:
 ### Batch Size Considerations
 
 The `BatchSize` setting controls how many records are:
-1. **Read from PostgreSQL** in each query (using OFFSET/LIMIT)
+1. **Read from PostgreSQL** in each query (using cursor-based pagination with `id > last_id`)
 2. **Written to MongoDB** in each batch operation
 
 **For Large Datasets (Millions of Records):**
 - Recommended: 1000-5000 records per batch
-- The tool uses streaming approach - fetches one batch, processes it, writes to MongoDB, then fetches the next
+- The tool uses cursor pagination - fetches one batch using the last ID as cursor, processes it, writes to MongoDB, then fetches the next
 - Memory usage stays constant regardless of total dataset size
 - Progress is reported with percentage completion
+
+**Cursor Pagination Benefits:**
+- More efficient than OFFSET/LIMIT for large datasets
+- Consistent performance regardless of pagination depth
+- Uses indexed `id` field (members: UUID, bundles: BIGINT) for optimal query performance
+- Avoids issues with OFFSET performance degradation on large tables
 
 **Memory Efficiency:**
 - Old behavior: Loaded ALL records into memory before processing ❌
@@ -289,11 +295,18 @@ The `BatchSize` setting controls how many records are:
 
 The migration tool is optimized for large-scale migrations:
 
-- **Batch Reading**: Uses PostgreSQL OFFSET/LIMIT to fetch records in chunks
+- **Cursor-Based Pagination**: Uses `WHERE id > last_id ORDER BY id LIMIT n` for efficient batch reading
+- **Indexed Queries**: Leverages primary key indexes (members.id, bundles.id) for optimal performance
 - **Batch Writing**: Inserts multiple documents to MongoDB in single operations
 - **Memory Efficient**: Processes one batch at a time, never loads entire dataset
 - **Progress Tracking**: Real-time percentage updates during migration
 - **Scalability**: Successfully handles tens of millions of records
+- **Consistent Performance**: Unlike OFFSET/LIMIT, cursor pagination maintains speed regardless of dataset position
+
+**Why Cursor Pagination?**
+- OFFSET/LIMIT becomes slower as offset increases (must skip all previous rows)
+- Cursor pagination (`id > last_id`) uses index seek, maintaining constant query time
+- Perfect for sequential processing of large datasets
 
 **Example Output for Large Dataset:**
 ```
@@ -302,11 +315,13 @@ Batch size: 1000
 Counting records in PostgreSQL...
 Found 15000000 members to migrate
 Creating indexes...
-Starting batch migration...
-Fetching batch at offset 0...
+Starting batch migration with cursor pagination...
+Fetching batch using cursor (last ID: START)...
 Converting 1000 members with their bundles...
 Processed 1000/15000000 members (0.01%)
-Fetching batch at offset 1000...
+Fetching batch using cursor (last ID: a3f7c2d1-...)...
+Converting 1000 members with their bundles...
+Processed 2000/15000000 members (0.01%)
 ...
 Processed 15000000/15000000 members (100.00%)
 Migration completed: 15000000 members migrated

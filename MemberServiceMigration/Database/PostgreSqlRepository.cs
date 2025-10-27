@@ -37,23 +37,40 @@ public class PostgreSqlRepository
         return Convert.ToInt64(result);
     }
 
-    public async Task<List<Member>> GetMembersBatchAsync(int offset, int limit)
+    public async Task<List<Member>> GetMembersBatchAsync(Guid? lastMemberId, int limit)
     {
         var members = new List<Member>();
         
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
         
-        var query = @"
-            SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
-                   create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
-            FROM members
-            ORDER BY id
-            LIMIT @limit OFFSET @offset";
+        string query;
+        if (lastMemberId.HasValue)
+        {
+            query = @"
+                SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
+                       create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
+                FROM members
+                WHERE id > @lastId
+                ORDER BY id
+                LIMIT @limit";
+        }
+        else
+        {
+            query = @"
+                SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
+                       create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
+                FROM members
+                ORDER BY id
+                LIMIT @limit";
+        }
         
         await using var command = new NpgsqlCommand(query, connection);
+        if (lastMemberId.HasValue)
+        {
+            command.Parameters.AddWithValue("lastId", lastMemberId.Value);
+        }
         command.Parameters.AddWithValue("limit", limit);
-        command.Parameters.AddWithValue("offset", offset);
         
         await using var reader = await command.ExecuteReaderAsync();
         
@@ -84,23 +101,40 @@ public class PostgreSqlRepository
         return members;
     }
 
-    public async Task<List<Bundle>> GetBundlesBatchAsync(int offset, int limit)
+    public async Task<List<Bundle>> GetBundlesBatchAsync(long? lastBundleId, int limit)
     {
         var bundles = new List<Bundle>();
         
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
         
-        var query = @"
-            SELECT id, key, type, tenant_id, extensions, member_id, 
-                   create_at, create_user, update_at, update_user
-            FROM bundles
-            ORDER BY id
-            LIMIT @limit OFFSET @offset";
+        string query;
+        if (lastBundleId.HasValue)
+        {
+            query = @"
+                SELECT id, key, type, tenant_id, extensions, member_id, 
+                       create_at, create_user, update_at, update_user
+                FROM bundles
+                WHERE id > @lastId
+                ORDER BY id
+                LIMIT @limit";
+        }
+        else
+        {
+            query = @"
+                SELECT id, key, type, tenant_id, extensions, member_id, 
+                       create_at, create_user, update_at, update_user
+                FROM bundles
+                ORDER BY id
+                LIMIT @limit";
+        }
         
         await using var command = new NpgsqlCommand(query, connection);
+        if (lastBundleId.HasValue)
+        {
+            command.Parameters.AddWithValue("lastId", lastBundleId.Value);
+        }
         command.Parameters.AddWithValue("limit", limit);
-        command.Parameters.AddWithValue("offset", offset);
         
         await using var reader = await command.ExecuteReaderAsync();
         
