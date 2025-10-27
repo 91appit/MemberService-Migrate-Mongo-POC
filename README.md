@@ -44,7 +44,25 @@ MemberServiceMigration/
 - .NET 8 SDK
 - Visual Studio 2022 or later (optional, for GUI development)
 - PostgreSQL database with `members` and `bundles` tables
-- MongoDB instance
+- MongoDB instance (or use Docker - see below)
+
+## Quick Start with Docker
+
+The easiest way to set up MongoDB for this project is using Docker:
+
+```bash
+# Start MongoDB and Mongo Express
+docker-compose up -d
+
+# Verify containers are running
+docker-compose ps
+```
+
+MongoDB will be available at: `mongodb://admin:admin123@localhost:27017/memberdb?authSource=admin`
+
+Mongo Express (Web UI) will be available at: http://localhost:8081
+
+For detailed Docker setup instructions, see [DOCKER.md](DOCKER.md)
 
 ## Opening the Project
 

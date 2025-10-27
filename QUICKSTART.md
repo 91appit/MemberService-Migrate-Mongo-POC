@@ -8,7 +8,8 @@ Before you begin, ensure you have the following installed:
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) or later
 - Access to a PostgreSQL database with the source data
-- Access to a MongoDB instance (can be local or cloud-based)
+- **Option A**: [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) (recommended)
+- **Option B**: Access to a MongoDB instance (local or cloud-based)
 
 ## Step 1: Clone the Repository
 
@@ -17,7 +18,29 @@ git clone <repository-url>
 cd MemberService-Migrate-Mongo-POC
 ```
 
-## Step 2: Configure the Application
+## Step 2: Set Up MongoDB with Docker (Recommended)
+
+The easiest way to get started is using Docker:
+
+```bash
+# Start MongoDB and Mongo Express
+docker-compose up -d
+
+# Verify containers are running
+docker-compose ps
+```
+
+This will start:
+- MongoDB on port 27017
+- Mongo Express (Web UI) on port 8081 (http://localhost:8081)
+
+Default credentials:
+- Username: `admin`
+- Password: `admin123`
+
+For more details, see [DOCKER.md](DOCKER.md)
+
+## Step 3: Configure the Application
 
 1. Navigate to the application directory:
    ```bash
@@ -34,8 +57,8 @@ cd MemberService-Migrate-Mongo-POC
    {
      "Database": {
        "PostgreSqlConnectionString": "Host=your_host;Port=5432;Database=your_db;Username=your_user;Password=your_password",
-       "MongoDbConnectionString": "mongodb://your_mongo_host:27017",
-       "MongoDbDatabaseName": "your_mongo_db"
+       "MongoDbConnectionString": "mongodb://admin:admin123@localhost:27017/memberdb?authSource=admin",
+       "MongoDbDatabaseName": "memberdb"
      },
      "Migration": {
        "Mode": "Embedding",
@@ -51,7 +74,12 @@ cd MemberService-Migrate-Mongo-POC
 Host=localhost;Port=5432;Database=memberdb;Username=postgres;Password=mypassword
 ```
 
-**MongoDB (Local):**
+**MongoDB (Docker - default):**
+```
+mongodb://admin:admin123@localhost:27017/memberdb?authSource=admin
+```
+
+**MongoDB (Local without auth):**
 ```
 mongodb://localhost:27017
 ```
@@ -61,16 +89,16 @@ mongodb://localhost:27017
 mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority
 ```
 
-## Step 3: Build the Application
+## Step 4: Build the Application
 
 ```bash
-dotnet build
+dotnet build MemberServiceMigration.sln
 ```
 
-## Step 4: Run the Migration
+## Step 5: Run the Migration
 
 ```bash
-dotnet run
+dotnet run --project MemberServiceMigration
 ```
 
 The application will:
@@ -81,11 +109,25 @@ The application will:
 5. Insert the data in batches
 6. Display progress and completion messages
 
-## Step 5: Verify the Migration
+## Step 6: Verify the Migration
+
+### Using Mongo Express (Web UI)
+
+1. Open http://localhost:8081 in your browser
+2. Login with username `admin` and password `admin123`
+3. Select the `memberdb` database
+4. View the `members` collection (and `bundles` if using Referencing mode)
+
+### Using MongoDB Shell
+
+Connect to MongoDB:
+```bash
+docker exec -it memberservice-mongodb mongosh -u admin -p admin123 --authenticationDatabase admin
+```
 
 ### For Embedding Mode
 
-Connect to MongoDB and check the members collection:
+Check the members collection:
 
 ```javascript
 // Using MongoDB Shell
