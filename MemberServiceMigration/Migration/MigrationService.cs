@@ -51,7 +51,8 @@ public class MigrationService
         Console.WriteLine("Counting records in PostgreSQL...");
         
         var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
-        Console.WriteLine($"Found {totalMembers} members to migrate");
+        var totalBundles = await _postgreSqlRepository.GetBundlesCountAsync();
+        Console.WriteLine($"Found {totalMembers} members and {totalBundles} bundles to migrate");
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         
@@ -60,7 +61,8 @@ public class MigrationService
 
         Console.WriteLine("Starting batch migration with cursor pagination...");
         
-        var processedCount = 0;
+        var processedMemberCount = 0;
+        var processedBundleCount = 0;
         Guid? lastMemberId = null;
         
         while (true)
@@ -79,7 +81,8 @@ public class MigrationService
             var memberIds = membersBatch.Select(m => m.Id).ToList();
             var bundlesByMember = await _postgreSqlRepository.GetBundlesByMemberIdsAsync(memberIds);
             
-            Console.WriteLine($"Converting {membersBatch.Count} members with their bundles...");
+            var batchBundleCount = bundlesByMember.Values.Sum(b => b.Count);
+            Console.WriteLine($"Converting {membersBatch.Count} members with {batchBundleCount} bundles...");
             
             // Convert to MongoDB documents
             var documents = membersBatch.Select(member =>
@@ -92,15 +95,16 @@ public class MigrationService
             if (documents.Any())
             {
                 await membersCollection.InsertManyAsync(documents);
-                processedCount += documents.Count;
-                Console.WriteLine($"Processed {processedCount}/{totalMembers} members ({(processedCount * 100.0 / totalMembers):F2}%)");
+                processedMemberCount += documents.Count;
+                processedBundleCount += batchBundleCount;
+                Console.WriteLine($"Processed {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) and {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%)");
             }
             
             // Update cursor to the last member ID in this batch
             lastMemberId = membersBatch.Last().Id;
         }
         
-        Console.WriteLine($"Migration completed: {processedCount} members migrated");
+        Console.WriteLine($"Migration completed: {processedMemberCount} members with {processedBundleCount} bundles migrated");
     }
 
     private async Task MigrateReferencingModeAsync()
