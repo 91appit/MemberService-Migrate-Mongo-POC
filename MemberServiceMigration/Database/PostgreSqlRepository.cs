@@ -7,16 +7,22 @@ namespace MemberServiceMigration.Database;
 public class PostgreSqlRepository
 {
     private readonly string _connectionString;
+    private readonly NpgsqlDataSource _dataSource;
 
     public PostgreSqlRepository(string connectionString)
     {
         _connectionString = connectionString;
+        
+        // Create a data source with optimized connection pooling for better performance
+        var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+        dataSourceBuilder.ConnectionStringBuilder.MaxPoolSize = 100;
+        dataSourceBuilder.ConnectionStringBuilder.MinPoolSize = 10;
+        _dataSource = dataSourceBuilder.Build();
     }
 
     public async Task<long> GetMembersCountAsync()
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await using var connection = await _dataSource.OpenConnectionAsync();
         
         var query = "SELECT COUNT(*) FROM members";
         await using var command = new NpgsqlCommand(query, connection);
@@ -27,8 +33,7 @@ public class PostgreSqlRepository
 
     public async Task<long> GetBundlesCountAsync()
     {
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await using var connection = await _dataSource.OpenConnectionAsync();
         
         var query = "SELECT COUNT(*) FROM bundles";
         await using var command = new NpgsqlCommand(query, connection);
@@ -41,8 +46,7 @@ public class PostgreSqlRepository
     {
         var members = new List<Member>();
         
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await using var connection = await _dataSource.OpenConnectionAsync();
         
         string query;
         if (lastMemberId.HasValue)
@@ -105,8 +109,7 @@ public class PostgreSqlRepository
     {
         var bundles = new List<Bundle>();
         
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await using var connection = await _dataSource.OpenConnectionAsync();
         
         string query;
         if (lastBundleId.HasValue)
@@ -169,15 +172,15 @@ public class PostgreSqlRepository
             return bundlesByMember;
         }
         
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
+        await using var connection = await _dataSource.OpenConnectionAsync();
         
+        // Optimized query with explicit ordering to help query planner
         var query = @"
             SELECT id, key, type, tenant_id, extensions, member_id, 
                    create_at, create_user, update_at, update_user
             FROM bundles
             WHERE member_id = ANY(@memberIds)
-            ORDER BY member_id";
+            ORDER BY member_id, id";
         
         await using var command = new NpgsqlCommand(query, connection);
         command.Parameters.AddWithValue("memberIds", memberIds.ToArray());

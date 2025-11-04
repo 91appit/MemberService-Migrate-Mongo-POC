@@ -56,18 +56,18 @@ public class MigrationService
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         
-        Console.WriteLine("Creating indexes...");
-        await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
+        Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
         Console.WriteLine("Starting batch migration with cursor pagination...");
         
         var processedMemberCount = 0;
         var processedBundleCount = 0;
         Guid? lastMemberId = null;
+        var startTime = DateTime.UtcNow;
         
         while (true)
         {
-            Console.WriteLine($"Fetching batch using cursor (last ID: {lastMemberId?.ToString() ?? "START"})...");
+            var batchStartTime = DateTime.UtcNow;
             
             // Fetch a batch of members using cursor pagination
             var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
@@ -77,34 +77,68 @@ public class MigrationService
                 break;
             }
             
+            var membersReadTime = DateTime.UtcNow;
+            
             // Fetch bundles for this batch of members
             var memberIds = membersBatch.Select(m => m.Id).ToList();
             var bundlesByMember = await _postgreSqlRepository.GetBundlesByMemberIdsAsync(memberIds);
             
             var batchBundleCount = bundlesByMember.Values.Sum(b => b.Count);
-            Console.WriteLine($"Converting {membersBatch.Count} members with {batchBundleCount} bundles...");
+            var bundlesReadTime = DateTime.UtcNow;
             
-            // Convert to MongoDB documents
-            var documents = membersBatch.Select(member =>
+            // Convert to MongoDB documents in parallel for better CPU utilization
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocumentEmbedding>();
+            
+            Parallel.ForEach(membersBatch, parallelOptions, member =>
             {
                 bundlesByMember.TryGetValue(member.Id, out var bundles);
-                return DataConverter.ConvertToMemberDocumentEmbedding(member, bundles);
-            }).ToList();
+                var document = DataConverter.ConvertToMemberDocumentEmbedding(member, bundles);
+                documents.Add(document);
+            });
 
-            // Insert into MongoDB
-            if (documents.Any())
+            var conversionTime = DateTime.UtcNow;
+
+            // Insert into MongoDB with unordered bulk insert for better performance
+            var documentsList = documents.ToList();
+            if (documentsList.Any())
             {
-                await membersCollection.InsertManyAsync(documents);
-                processedMemberCount += documents.Count;
+                var options = new InsertManyOptions { IsOrdered = false };
+                await membersCollection.InsertManyAsync(documentsList, options);
+                processedMemberCount += documentsList.Count;
                 processedBundleCount += batchBundleCount;
-                Console.WriteLine($"Processed {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) and {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%)");
+                
+                var insertTime = DateTime.UtcNow;
+                var batchTotalTime = (insertTime - batchStartTime).TotalSeconds;
+                var membersReadSec = (membersReadTime - batchStartTime).TotalSeconds;
+                var bundlesReadSec = (bundlesReadTime - membersReadTime).TotalSeconds;
+                var conversionSec = (conversionTime - bundlesReadTime).TotalSeconds;
+                var insertSec = (insertTime - conversionTime).TotalSeconds;
+                
+                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                var avgTimePerBatch = elapsedTime / (processedMemberCount / (double)_settings.BatchSize);
+                var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
+                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                
+                Console.WriteLine($"Batch {processedMemberCount / _settings.BatchSize}: {membersBatch.Count} members, {batchBundleCount} bundles in {batchTotalTime:F2}s (Read M:{membersReadSec:F2}s, B:{bundlesReadSec:F2}s, Conv:{conversionSec:F2}s, Insert:{insertSec:F2}s)");
+                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%), {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
             // Update cursor to the last member ID in this batch
             lastMemberId = membersBatch.Last().Id;
         }
         
-        Console.WriteLine($"Migration completed: {processedMemberCount} members with {processedBundleCount} bundles migrated");
+        var migrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
+        Console.WriteLine($"Data migration completed in {TimeSpan.FromSeconds(migrationTime):hh\\:mm\\:ss}: {processedMemberCount} members with {processedBundleCount} bundles migrated");
+        
+        Console.WriteLine("Creating indexes...");
+        var indexStartTime = DateTime.UtcNow;
+        await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
+        var indexTime = (DateTime.UtcNow - indexStartTime).TotalSeconds;
+        Console.WriteLine($"Indexes created in {TimeSpan.FromSeconds(indexTime):hh\\:mm\\:ss}");
+        
+        var totalTime = (DateTime.UtcNow - startTime).TotalSeconds;
+        Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");
     }
 
     private async Task MigrateReferencingModeAsync()
@@ -119,8 +153,9 @@ public class MigrationService
         var membersCollection = _mongoDbRepository.GetMembersCollection();
         var bundlesCollection = _mongoDbRepository.GetBundlesCollection();
         
-        Console.WriteLine("Creating indexes...");
-        await _mongoDbRepository.CreateIndexesForReferencingAsync();
+        Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
+
+        var startTime = DateTime.UtcNow;
 
         // Migrate members
         Console.WriteLine("Starting members migration with cursor pagination...");
@@ -130,7 +165,7 @@ public class MigrationService
         
         while (true)
         {
-            Console.WriteLine($"Fetching members batch using cursor (last ID: {lastMemberId?.ToString() ?? "START"})...");
+            var batchStartTime = DateTime.UtcNow;
             
             var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
             
@@ -139,30 +174,51 @@ public class MigrationService
                 break;
             }
             
-            Console.WriteLine($"Converting {membersBatch.Count} members...");
+            // Convert to MongoDB documents in parallel for better CPU utilization
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocument>();
             
-            var documents = membersBatch.Select(DataConverter.ConvertToMemberDocument).ToList();
-
-            if (documents.Any())
+            Parallel.ForEach(membersBatch, parallelOptions, member =>
             {
-                await membersCollection.InsertManyAsync(documents);
-                processedMemberCount += documents.Count;
-                Console.WriteLine($"Processed {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%)");
+                var document = DataConverter.ConvertToMemberDocument(member);
+                documents.Add(document);
+            });
+            
+            var documentsList = documents.ToList();
+
+            if (documentsList.Any())
+            {
+                var options = new InsertManyOptions { IsOrdered = false };
+                await membersCollection.InsertManyAsync(documentsList, options);
+                processedMemberCount += documentsList.Count;
+                
+                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                var avgTimePerBatch = elapsedTime / (processedMemberCount / (double)_settings.BatchSize);
+                var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
+                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                
+                Console.WriteLine($"Batch {processedMemberCount / _settings.BatchSize}: {membersBatch.Count} members in {batchTime:F2}s");
+                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
             // Update cursor to the last member ID in this batch
             lastMemberId = membersBatch.Last().Id;
         }
 
+        var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
+        Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+
         // Migrate bundles
         Console.WriteLine("Starting bundles migration with cursor pagination...");
         
+        var bundlesStartTime = DateTime.UtcNow;
         var processedBundleCount = 0;
         long? lastBundleId = null;
         
         while (true)
         {
-            Console.WriteLine($"Fetching bundles batch using cursor (last ID: {lastBundleId?.ToString() ?? "START"})...");
+            var batchStartTime = DateTime.UtcNow;
             
             var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
             
@@ -171,21 +227,48 @@ public class MigrationService
                 break;
             }
             
-            Console.WriteLine($"Converting {bundlesBatch.Count} bundles...");
+            // Convert to MongoDB documents in parallel for better CPU utilization
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleDocument>();
             
-            var documents = bundlesBatch.Select(DataConverter.ConvertToBundleDocument).ToList();
-
-            if (documents.Any())
+            Parallel.ForEach(bundlesBatch, parallelOptions, bundle =>
             {
-                await bundlesCollection.InsertManyAsync(documents);
-                processedBundleCount += documents.Count;
-                Console.WriteLine($"Processed {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%)");
+                var document = DataConverter.ConvertToBundleDocument(bundle);
+                documents.Add(document);
+            });
+            
+            var documentsList = documents.ToList();
+
+            if (documentsList.Any())
+            {
+                var options = new InsertManyOptions { IsOrdered = false };
+                await bundlesCollection.InsertManyAsync(documentsList, options);
+                processedBundleCount += documentsList.Count;
+                
+                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                var elapsedTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
+                var avgTimePerBatch = elapsedTime / (processedBundleCount / (double)_settings.BatchSize);
+                var estimatedRemainingBatches = (totalBundles - processedBundleCount) / (double)_settings.BatchSize;
+                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                
+                Console.WriteLine($"Batch {processedBundleCount / _settings.BatchSize}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
+                Console.WriteLine($"Progress: {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
             // Update cursor to the last bundle ID in this batch
             lastBundleId = bundlesBatch.Last().Id;
         }
         
-        Console.WriteLine($"Migration completed: {processedMemberCount} members and {processedBundleCount} bundles migrated");
+        var bundlesMigrationTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
+        Console.WriteLine($"Bundles migration completed in {TimeSpan.FromSeconds(bundlesMigrationTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
+        
+        Console.WriteLine("Creating indexes...");
+        var indexStartTime = DateTime.UtcNow;
+        await _mongoDbRepository.CreateIndexesForReferencingAsync();
+        var indexTime = (DateTime.UtcNow - indexStartTime).TotalSeconds;
+        Console.WriteLine($"Indexes created in {TimeSpan.FromSeconds(indexTime):hh\\:mm\\:ss}");
+        
+        var totalTime = (DateTime.UtcNow - startTime).TotalSeconds;
+        Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");
     }
 }
