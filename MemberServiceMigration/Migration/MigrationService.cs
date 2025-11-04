@@ -116,11 +116,12 @@ public class MigrationService
                 var insertSec = (insertTime - conversionTime).TotalSeconds;
                 
                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                var avgTimePerBatch = elapsedTime / (processedMemberCount / (double)_settings.BatchSize);
+                var batchNumber = processedMemberCount / _settings.BatchSize;
+                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTotalTime;
                 var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
                 var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
                 
-                Console.WriteLine($"Batch {processedMemberCount / _settings.BatchSize}: {membersBatch.Count} members, {batchBundleCount} bundles in {batchTotalTime:F2}s (Read M:{membersReadSec:F2}s, B:{bundlesReadSec:F2}s, Conv:{conversionSec:F2}s, Insert:{insertSec:F2}s)");
+                Console.WriteLine($"Batch {batchNumber}: {membersBatch.Count} members, {batchBundleCount} bundles in {batchTotalTime:F2}s (Read M:{membersReadSec:F2}s, B:{bundlesReadSec:F2}s, Conv:{conversionSec:F2}s, Insert:{insertSec:F2}s)");
                 Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%), {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
@@ -194,11 +195,12 @@ public class MigrationService
                 
                 var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                var avgTimePerBatch = elapsedTime / (processedMemberCount / (double)_settings.BatchSize);
+                var batchNumber = processedMemberCount / _settings.BatchSize;
+                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
                 var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
                 var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
                 
-                Console.WriteLine($"Batch {processedMemberCount / _settings.BatchSize}: {membersBatch.Count} members in {batchTime:F2}s");
+                Console.WriteLine($"Batch {batchNumber}: {membersBatch.Count} members in {batchTime:F2}s");
                 Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
@@ -247,11 +249,12 @@ public class MigrationService
                 
                 var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                 var elapsedTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
-                var avgTimePerBatch = elapsedTime / (processedBundleCount / (double)_settings.BatchSize);
+                var batchNumber = processedBundleCount / _settings.BatchSize;
+                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
                 var estimatedRemainingBatches = (totalBundles - processedBundleCount) / (double)_settings.BatchSize;
                 var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
                 
-                Console.WriteLine($"Batch {processedBundleCount / _settings.BatchSize}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
+                Console.WriteLine($"Batch {batchNumber}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
                 Console.WriteLine($"Progress: {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             

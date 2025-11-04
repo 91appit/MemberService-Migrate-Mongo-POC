@@ -228,14 +228,14 @@ Added detailed timing metrics for each batch:
 
 ### After Optimization (Conservative Estimate)
 
-Combining all optimizations:
-- Deferred indexes: 40% faster
-- Unordered inserts: 25% faster
-- Connection pooling: 20% faster
-- Parallel conversion: 25% faster
-- Query optimization: 7% faster
+Combining all optimizations (multiplicative speedup factors):
+- Deferred indexes: 1.67x faster (40% reduction in time)
+- Unordered inserts: 1.33x faster (25% reduction in time)
+- Connection pooling: 1.25x faster (20% reduction in time)
+- Parallel conversion: 1.33x faster (25% reduction in time)
+- Query optimization: 1.08x faster (7% reduction in time)
 
-**Compound improvement**: 1 / (1 - 0.40) × 1.25 × 1.20 × 1.25 × 1.07 ≈ **3.2x faster**
+**Compound improvement**: 1.67 × 1.33 × 1.25 × 1.33 × 1.08 ≈ **3.2x faster**
 
 ### Expected Results
 - **Time**: ~55-60 minutes (vs. 180 minutes)
