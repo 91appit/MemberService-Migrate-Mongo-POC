@@ -174,15 +174,19 @@ public class PostgreSqlRepository
         
         await using var connection = await _dataSource.OpenConnectionAsync();
         
-        // Optimized query with explicit ordering to help query planner
-        var query = @"
-            SELECT id, key, type, tenant_id, extensions, member_id, 
-                   create_at, create_user, update_at, update_user
-            FROM bundles
-            WHERE member_id = ANY(@memberIds)
-            ORDER BY member_id, id";
+        // Use temporary table approach for better performance with large batch lookups
+        // This ensures PostgreSQL uses the ix_bundles_member_id index efficiently
+        var tempTableQuery = @"
+            CREATE TEMP TABLE temp_member_ids (member_id uuid) ON COMMIT DROP;
+            INSERT INTO temp_member_ids (member_id) SELECT unnest(@memberIds);
+            
+            SELECT b.id, b.key, b.type, b.tenant_id, b.extensions, b.member_id, 
+                   b.create_at, b.create_user, b.update_at, b.update_user
+            FROM bundles b
+            INNER JOIN temp_member_ids t ON b.member_id = t.member_id
+            ORDER BY b.member_id, b.id";
         
-        await using var command = new NpgsqlCommand(query, connection);
+        await using var command = new NpgsqlCommand(tempTableQuery, connection);
         command.Parameters.AddWithValue("memberIds", memberIds.ToArray());
         
         await using var reader = await command.ExecuteReaderAsync();
