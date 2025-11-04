@@ -56,6 +56,18 @@ public class MigrationService
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         
+        // Check if collection already has data
+        var existingCount = await membersCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.MemberDocumentEmbedding>.Empty);
+        if (existingCount > 0)
+        {
+            Console.WriteLine($"WARNING: MongoDB collection already contains {existingCount} documents!");
+            Console.WriteLine("Dropping existing collection to avoid duplicate key errors...");
+            await _mongoDbRepository.DropMembersEmbeddingCollectionAsync();
+            Console.WriteLine("Collection dropped successfully.");
+            // Re-get the collection reference after dropping
+            membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
+        }
+        
         Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
         var startTime = DateTime.UtcNow;
@@ -225,6 +237,32 @@ public class MigrationService
 
         var membersCollection = _mongoDbRepository.GetMembersCollection();
         var bundlesCollection = _mongoDbRepository.GetBundlesCollection();
+        
+        // Check if collections already have data
+        var existingMembersCount = await membersCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.MemberDocument>.Empty);
+        var existingBundlesCount = await bundlesCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.BundleDocument>.Empty);
+        
+        if (existingMembersCount > 0 || existingBundlesCount > 0)
+        {
+            Console.WriteLine($"WARNING: MongoDB collections already contain data (Members: {existingMembersCount}, Bundles: {existingBundlesCount})!");
+            Console.WriteLine("Dropping existing collections to avoid duplicate key errors...");
+            
+            if (existingMembersCount > 0)
+            {
+                await _mongoDbRepository.DropMembersCollectionAsync();
+                Console.WriteLine("Members collection dropped successfully.");
+            }
+            
+            if (existingBundlesCount > 0)
+            {
+                await _mongoDbRepository.DropBundlesCollectionAsync();
+                Console.WriteLine("Bundles collection dropped successfully.");
+            }
+            
+            // Re-get the collection references after dropping
+            membersCollection = _mongoDbRepository.GetMembersCollection();
+            bundlesCollection = _mongoDbRepository.GetBundlesCollection();
+        }
         
         Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
