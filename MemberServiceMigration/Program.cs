@@ -21,6 +21,7 @@ try
     Console.WriteLine($"MongoDB Database: {appSettings.Database.MongoDbDatabaseName}");
     Console.WriteLine($"Migration Mode: {appSettings.Migration.Mode}");
     Console.WriteLine($"Batch Size: {appSettings.Migration.BatchSize}");
+    Console.WriteLine($"Max Degree of Parallelism: {appSettings.Migration.MaxDegreeOfParallelism}");
     Console.WriteLine();
 
     var postgreSqlRepository = new PostgreSqlRepository(appSettings.Database.PostgreSqlConnectionString);

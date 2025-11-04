@@ -99,4 +99,19 @@ public class MongoDbRepository
             )
         });
     }
+
+    public async Task DropMembersEmbeddingCollectionAsync()
+    {
+        await _database.DropCollectionAsync("members");
+    }
+
+    public async Task DropMembersCollectionAsync()
+    {
+        await _database.DropCollectionAsync("members");
+    }
+
+    public async Task DropBundlesCollectionAsync()
+    {
+        await _database.DropCollectionAsync("bundles");
+    }
 }
