@@ -58,18 +58,18 @@ public class MigrationService
         
         Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
-        Console.WriteLine("Starting batch migration with cursor pagination...");
+        var startTime = DateTime.UtcNow;
+
+        // Phase 1: Migrate all members first (without bundles for better performance)
+        Console.WriteLine("Phase 1: Migrating members without bundles...");
         
         var processedMemberCount = 0;
-        var processedBundleCount = 0;
         Guid? lastMemberId = null;
-        var startTime = DateTime.UtcNow;
         
         while (true)
         {
             var batchStartTime = DateTime.UtcNow;
             
-            // Fetch a batch of members using cursor pagination
             var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
             
             if (!membersBatch.Any())
@@ -77,60 +77,113 @@ public class MigrationService
                 break;
             }
             
-            var membersReadTime = DateTime.UtcNow;
-            
-            // Fetch bundles for this batch of members
-            var memberIds = membersBatch.Select(m => m.Id).ToList();
-            var bundlesByMember = await _postgreSqlRepository.GetBundlesByMemberIdsAsync(memberIds);
-            
-            var batchBundleCount = bundlesByMember.Values.Sum(b => b.Count);
-            var bundlesReadTime = DateTime.UtcNow;
-            
-            // Convert to MongoDB documents in parallel for better CPU utilization
+            // Convert members to documents without bundles in parallel
             var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
             var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocumentEmbedding>();
             
             Parallel.ForEach(membersBatch, parallelOptions, member =>
             {
-                bundlesByMember.TryGetValue(member.Id, out var bundles);
-                var document = DataConverter.ConvertToMemberDocumentEmbedding(member, bundles);
+                var document = DataConverter.ConvertToMemberDocumentEmbedding(member, null);
                 documents.Add(document);
             });
 
-            var conversionTime = DateTime.UtcNow;
-
-            // Insert into MongoDB with unordered bulk insert for better performance
             var documentsList = documents.ToList();
             if (documentsList.Any())
             {
                 var options = new InsertManyOptions { IsOrdered = false };
                 await membersCollection.InsertManyAsync(documentsList, options);
                 processedMemberCount += documentsList.Count;
-                processedBundleCount += batchBundleCount;
                 
-                var insertTime = DateTime.UtcNow;
-                var batchTotalTime = (insertTime - batchStartTime).TotalSeconds;
-                var membersReadSec = (membersReadTime - batchStartTime).TotalSeconds;
-                var bundlesReadSec = (bundlesReadTime - membersReadTime).TotalSeconds;
-                var conversionSec = (conversionTime - bundlesReadTime).TotalSeconds;
-                var insertSec = (insertTime - conversionTime).TotalSeconds;
-                
+                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                 var batchNumber = processedMemberCount / _settings.BatchSize;
-                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTotalTime;
+                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
                 var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
                 var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
                 
-                Console.WriteLine($"Batch {batchNumber}: {membersBatch.Count} members, {batchBundleCount} bundles in {batchTotalTime:F2}s (Read M:{membersReadSec:F2}s, B:{bundlesReadSec:F2}s, Conv:{conversionSec:F2}s, Insert:{insertSec:F2}s)");
-                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%), {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                Console.WriteLine($"Members Batch {batchNumber}: {membersBatch.Count} members in {batchTime:F2}s");
+                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
             }
             
-            // Update cursor to the last member ID in this batch
             lastMemberId = membersBatch.Last().Id;
         }
         
-        var migrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
-        Console.WriteLine($"Data migration completed in {TimeSpan.FromSeconds(migrationTime):hh\\:mm\\:ss}: {processedMemberCount} members with {processedBundleCount} bundles migrated");
+        var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
+        Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+
+        // Phase 2: Migrate bundles and update member documents
+        Console.WriteLine("Phase 2: Migrating bundles and updating member documents...");
+        
+        var bundlesStartTime = DateTime.UtcNow;
+        var processedBundleCount = 0;
+        long? lastBundleId = null;
+        
+        // Group bundles by member to prepare bulk updates
+        var bundleUpdateBuffer = new Dictionary<Guid, List<Models.MongoDB.BundleEmbedded>>();
+        const int updateBatchSize = 100; // Update 100 members at a time
+        
+        while (true)
+        {
+            var batchStartTime = DateTime.UtcNow;
+            
+            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
+            
+            if (!bundlesBatch.Any())
+            {
+                break;
+            }
+            
+            // Convert bundles in parallel
+            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+            var bundlesByMember = new System.Collections.Concurrent.ConcurrentDictionary<Guid, System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>>();
+            
+            Parallel.ForEach(bundlesBatch, parallelOptions, bundle =>
+            {
+                var bundleEmbedded = DataConverter.ConvertToBundleEmbedded(bundle);
+                var memberBundles = bundlesByMember.GetOrAdd(bundle.MemberId, _ => new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>());
+                memberBundles.Add(bundleEmbedded);
+            });
+            
+            // Add to update buffer
+            foreach (var kvp in bundlesByMember)
+            {
+                if (!bundleUpdateBuffer.ContainsKey(kvp.Key))
+                {
+                    bundleUpdateBuffer[kvp.Key] = new List<Models.MongoDB.BundleEmbedded>();
+                }
+                bundleUpdateBuffer[kvp.Key].AddRange(kvp.Value);
+            }
+            
+            processedBundleCount += bundlesBatch.Count;
+            
+            // Perform bulk updates when buffer reaches threshold
+            if (bundleUpdateBuffer.Count >= updateBatchSize)
+            {
+                await UpdateMemberBundlesAsync(membersCollection, bundleUpdateBuffer);
+                bundleUpdateBuffer.Clear();
+            }
+            
+            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+            var elapsedTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
+            var batchNumber = processedBundleCount / _settings.BatchSize;
+            var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
+            var estimatedRemainingBatches = (totalBundles - processedBundleCount) / (double)_settings.BatchSize;
+            var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+            
+            Console.WriteLine($"Bundles Batch {batchNumber}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
+            Console.WriteLine($"Progress: {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+            
+            lastBundleId = bundlesBatch.Last().Id;
+        }
+        
+        // Update remaining members in buffer
+        if (bundleUpdateBuffer.Any())
+        {
+            await UpdateMemberBundlesAsync(membersCollection, bundleUpdateBuffer);
+        }
+        
+        var bundlesTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
+        Console.WriteLine($"Phase 2 completed in {TimeSpan.FromSeconds(bundlesTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
         
         Console.WriteLine("Creating indexes...");
         var indexStartTime = DateTime.UtcNow;
@@ -140,6 +193,25 @@ public class MigrationService
         
         var totalTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");
+    }
+
+    private async Task UpdateMemberBundlesAsync(
+        IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection, 
+        Dictionary<Guid, List<Models.MongoDB.BundleEmbedded>> bundlesByMemberId)
+    {
+        var bulkOps = new List<WriteModel<Models.MongoDB.MemberDocumentEmbedding>>();
+        
+        foreach (var kvp in bundlesByMemberId)
+        {
+            var filter = Builders<Models.MongoDB.MemberDocumentEmbedding>.Filter.Eq(m => m.Id, kvp.Key);
+            var update = Builders<Models.MongoDB.MemberDocumentEmbedding>.Update.PushEach(m => m.Bundles, kvp.Value);
+            bulkOps.Add(new UpdateOneModel<Models.MongoDB.MemberDocumentEmbedding>(filter, update));
+        }
+        
+        if (bulkOps.Any())
+        {
+            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false });
+        }
     }
 
     private async Task MigrateReferencingModeAsync()
