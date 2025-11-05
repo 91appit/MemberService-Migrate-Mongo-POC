@@ -1,5 +1,6 @@
 using Npgsql;
 using MemberServiceMigration.Models;
+using MemberServiceMigration.Data;
 using System.Text.Json;
 
 namespace MemberServiceMigration.Database;
@@ -52,8 +53,8 @@ public class PostgreSqlRepository
         if (lastMemberId.HasValue)
         {
             query = @"
-                SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
-                       create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
+                SELECT id, password, salt, tenant_id, state, allow_login, 
+                       create_at, create_user, update_at, update_user, version
                 FROM members
                 WHERE id > @lastId
                 ORDER BY id
@@ -62,8 +63,8 @@ public class PostgreSqlRepository
         else
         {
             query = @"
-                SELECT id, password, salt, tenant_id, state, allow_login, extensions, 
-                       create_at, create_user, update_at, update_user, version, tags, profile, tags_v2
+                SELECT id, password, salt, tenant_id, state, allow_login, 
+                       create_at, create_user, update_at, update_user, version
                 FROM members
                 ORDER BY id
                 LIMIT @limit";
@@ -88,15 +89,16 @@ public class PostgreSqlRepository
                 TenantId = reader.GetString(3),
                 State = reader.GetInt32(4),
                 AllowLogin = reader.GetBoolean(5),
-                Extensions = reader.IsDBNull(6) ? null : JsonDocument.Parse(reader.GetString(6)),
-                CreateAt = reader.GetDateTime(7),
-                CreateUser = reader.IsDBNull(8) ? null : reader.GetString(8),
-                UpdateAt = reader.GetDateTime(9),
-                UpdateUser = reader.IsDBNull(10) ? null : reader.GetString(10),
-                Version = reader.GetInt32(11),
-                Tags = reader.IsDBNull(12) ? null : (string[])reader.GetValue(12),
-                Profile = reader.IsDBNull(13) ? null : JsonDocument.Parse(reader.GetString(13)),
-                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
+                CreateAt = reader.GetDateTime(6),
+                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+                UpdateAt = reader.GetDateTime(8),
+                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
+                Version = reader.GetInt32(10),
+                // Use mock data for sensitive fields
+                Extensions = MockDataProvider.GetMemberExtension(),
+                Tags = MockDataProvider.GetMemberTags(),
+                Profile = MockDataProvider.GetMemberProfile(),
+                TagsV2 = MockDataProvider.GetMemberTagsV2()
             };
             
             members.Add(member);
@@ -115,7 +117,7 @@ public class PostgreSqlRepository
         if (lastBundleId.HasValue)
         {
             query = @"
-                SELECT id, key, type, tenant_id, extensions, member_id, 
+                SELECT id, type, tenant_id, member_id, 
                        create_at, create_user, update_at, update_user
                 FROM bundles
                 WHERE id > @lastId
@@ -125,7 +127,7 @@ public class PostgreSqlRepository
         else
         {
             query = @"
-                SELECT id, key, type, tenant_id, extensions, member_id, 
+                SELECT id, type, tenant_id, member_id, 
                        create_at, create_user, update_at, update_user
                 FROM bundles
                 ORDER BY id
@@ -146,15 +148,16 @@ public class PostgreSqlRepository
             var bundle = new Bundle
             {
                 Id = reader.GetInt64(0),
-                Key = reader.GetString(1),
-                Type = reader.GetInt32(2),
-                TenantId = reader.GetString(3),
-                Extensions = reader.IsDBNull(4) ? null : JsonDocument.Parse(reader.GetString(4)),
-                MemberId = reader.GetGuid(5),
-                CreateAt = reader.GetDateTime(6),
-                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdateAt = reader.GetDateTime(8),
-                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9)
+                Type = reader.GetInt32(1),
+                TenantId = reader.GetString(2),
+                MemberId = reader.GetGuid(3),
+                CreateAt = reader.GetDateTime(4),
+                CreateUser = reader.IsDBNull(5) ? null : reader.GetString(5),
+                UpdateAt = reader.GetDateTime(6),
+                UpdateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+                // Use mock data for sensitive fields
+                Key = MockDataProvider.GetBundleKey(),
+                Extensions = MockDataProvider.GetBundleExtension()
             };
             
             bundles.Add(bundle);
@@ -180,7 +183,7 @@ public class PostgreSqlRepository
             CREATE TEMP TABLE temp_member_ids (member_id uuid) ON COMMIT DROP;
             INSERT INTO temp_member_ids (member_id) SELECT unnest(@memberIds);
             
-            SELECT b.id, b.key, b.type, b.tenant_id, b.extensions, b.member_id, 
+            SELECT b.id, b.type, b.tenant_id, b.member_id, 
                    b.create_at, b.create_user, b.update_at, b.update_user
             FROM bundles b
             INNER JOIN temp_member_ids t ON b.member_id = t.member_id
@@ -196,15 +199,16 @@ public class PostgreSqlRepository
             var bundle = new Bundle
             {
                 Id = reader.GetInt64(0),
-                Key = reader.GetString(1),
-                Type = reader.GetInt32(2),
-                TenantId = reader.GetString(3),
-                Extensions = reader.IsDBNull(4) ? null : JsonDocument.Parse(reader.GetString(4)),
-                MemberId = reader.GetGuid(5),
-                CreateAt = reader.GetDateTime(6),
-                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdateAt = reader.GetDateTime(8),
-                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9)
+                Type = reader.GetInt32(1),
+                TenantId = reader.GetString(2),
+                MemberId = reader.GetGuid(3),
+                CreateAt = reader.GetDateTime(4),
+                CreateUser = reader.IsDBNull(5) ? null : reader.GetString(5),
+                UpdateAt = reader.GetDateTime(6),
+                UpdateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+                // Use mock data for sensitive fields
+                Key = MockDataProvider.GetBundleKey(),
+                Extensions = MockDataProvider.GetBundleExtension()
             };
             
             if (!bundlesByMember.ContainsKey(bundle.MemberId))
