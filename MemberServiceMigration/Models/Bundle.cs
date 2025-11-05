@@ -10,8 +10,4 @@ public class Bundle
     public string TenantId { get; set; } = string.Empty;
     public JsonDocument? Extensions { get; set; }
     public Guid MemberId { get; set; }
-    public DateTime CreateAt { get; set; }
-    public string? CreateUser { get; set; }
-    public DateTime UpdateAt { get; set; }
-    public string? UpdateUser { get; set; }
 }

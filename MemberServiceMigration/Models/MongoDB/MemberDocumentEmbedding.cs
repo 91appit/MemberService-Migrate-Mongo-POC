@@ -24,18 +24,4 @@ public class BundleEmbedded
     [BsonElement("extensions")]
     [BsonIgnoreIfNull]
     public BsonDocument? Extensions { get; set; }
-    
-    [BsonElement("create_at")]
-    public DateTime CreateAt { get; set; }
-    
-    [BsonElement("create_user")]
-    [BsonIgnoreIfNull]
-    public string? CreateUser { get; set; }
-    
-    [BsonElement("update_at")]
-    public DateTime UpdateAt { get; set; }
-    
-    [BsonElement("update_user")]
-    [BsonIgnoreIfNull]
-    public string? UpdateUser { get; set; }
 }

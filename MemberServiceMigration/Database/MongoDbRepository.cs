@@ -15,12 +15,12 @@ public class MongoDbRepository
 
     public IMongoCollection<MemberDocumentEmbedding> GetMembersEmbeddingCollection()
     {
-        return _database.GetCollection<MemberDocumentEmbedding>("members");
+        return _database.GetCollection<MemberDocumentEmbedding>("prod_members");
     }
 
     public IMongoCollection<MemberDocument> GetMembersCollection()
     {
-        return _database.GetCollection<MemberDocument>("members");
+        return _database.GetCollection<MemberDocument>("prod_members");
     }
 
     public IMongoCollection<BundleDocument> GetBundlesCollection()
@@ -86,10 +86,6 @@ public class MongoDbRepository
                 new CreateIndexOptions { Name = "ix_bundles_tenant_id" }
             ),
             new CreateIndexModel<BundleDocument>(
-                bundleIndexKeys.Ascending(b => b.UpdateAt),
-                new CreateIndexOptions { Name = "ix_bundles_update_at" }
-            ),
-            new CreateIndexModel<BundleDocument>(
                 bundleIndexKeys.Combine(
                     bundleIndexKeys.Ascending(b => b.Key),
                     bundleIndexKeys.Ascending(b => b.TenantId),
@@ -102,12 +98,12 @@ public class MongoDbRepository
 
     public async Task DropMembersEmbeddingCollectionAsync()
     {
-        await _database.DropCollectionAsync("members");
+        await _database.DropCollectionAsync("prod_members");
     }
 
     public async Task DropMembersCollectionAsync()
     {
-        await _database.DropCollectionAsync("members");
+        await _database.DropCollectionAsync("prod_members");
     }
 
     public async Task DropBundlesCollectionAsync()

@@ -24,18 +24,4 @@ public class BundleDocument
     [BsonElement("member_id")]
     [BsonRepresentation(BsonType.String)]
     public Guid MemberId { get; set; }
-    
-    [BsonElement("create_at")]
-    public DateTime CreateAt { get; set; }
-    
-    [BsonElement("create_user")]
-    [BsonIgnoreIfNull]
-    public string? CreateUser { get; set; }
-    
-    [BsonElement("update_at")]
-    public DateTime UpdateAt { get; set; }
-    
-    [BsonElement("update_user")]
-    [BsonIgnoreIfNull]
-    public string? UpdateUser { get; set; }
 }
