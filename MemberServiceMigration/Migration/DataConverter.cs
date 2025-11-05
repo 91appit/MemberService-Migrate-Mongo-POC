@@ -78,11 +78,7 @@ public static class DataConverter
             Type = bundle.Type,
             TenantId = bundle.TenantId,
             Extensions = ConvertJsonDocumentToBsonDocument(bundle.Extensions),
-            MemberId = bundle.MemberId,
-            CreateAt = bundle.CreateAt,
-            CreateUser = bundle.CreateUser,
-            UpdateAt = bundle.UpdateAt,
-            UpdateUser = bundle.UpdateUser
+            MemberId = bundle.MemberId
         };
     }
 

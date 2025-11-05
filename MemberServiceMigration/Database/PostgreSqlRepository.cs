@@ -151,12 +151,7 @@ public class PostgreSqlRepository
                 MemberId = reader.GetGuid(3),
                 // Use mock data for sensitive fields
                 Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension(),
-                // Set default values for audit fields (not queried from DB)
-                CreateAt = DateTime.UtcNow,
-                CreateUser = null,
-                UpdateAt = DateTime.UtcNow,
-                UpdateUser = null
+                Extensions = MockDataProvider.GetBundleExtension()
             };
             
             bundles.Add(bundle);
@@ -202,12 +197,7 @@ public class PostgreSqlRepository
                 MemberId = reader.GetGuid(3),
                 // Use mock data for sensitive fields
                 Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension(),
-                // Set default values for audit fields (not queried from DB)
-                CreateAt = DateTime.UtcNow,
-                CreateUser = null,
-                UpdateAt = DateTime.UtcNow,
-                UpdateUser = null
+                Extensions = MockDataProvider.GetBundleExtension()
             };
             
             if (!bundlesByMember.ContainsKey(bundle.MemberId))
