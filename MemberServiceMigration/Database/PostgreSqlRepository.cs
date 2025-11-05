@@ -117,8 +117,7 @@ public class PostgreSqlRepository
         if (lastBundleId.HasValue)
         {
             query = @"
-                SELECT id, type, tenant_id, member_id, 
-                       create_at, create_user, update_at, update_user
+                SELECT id, type, tenant_id, member_id
                 FROM bundles
                 WHERE id > @lastId
                 ORDER BY id
@@ -127,8 +126,7 @@ public class PostgreSqlRepository
         else
         {
             query = @"
-                SELECT id, type, tenant_id, member_id, 
-                       create_at, create_user, update_at, update_user
+                SELECT id, type, tenant_id, member_id
                 FROM bundles
                 ORDER BY id
                 LIMIT @limit";
@@ -151,13 +149,14 @@ public class PostgreSqlRepository
                 Type = reader.GetInt32(1),
                 TenantId = reader.GetString(2),
                 MemberId = reader.GetGuid(3),
-                CreateAt = reader.GetDateTime(4),
-                CreateUser = reader.IsDBNull(5) ? null : reader.GetString(5),
-                UpdateAt = reader.GetDateTime(6),
-                UpdateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
                 // Use mock data for sensitive fields
                 Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension()
+                Extensions = MockDataProvider.GetBundleExtension(),
+                // Set default values for audit fields (not queried from DB)
+                CreateAt = DateTime.UtcNow,
+                CreateUser = null,
+                UpdateAt = DateTime.UtcNow,
+                UpdateUser = null
             };
             
             bundles.Add(bundle);
@@ -183,8 +182,7 @@ public class PostgreSqlRepository
             CREATE TEMP TABLE temp_member_ids (member_id uuid) ON COMMIT DROP;
             INSERT INTO temp_member_ids (member_id) SELECT unnest(@memberIds);
             
-            SELECT b.id, b.type, b.tenant_id, b.member_id, 
-                   b.create_at, b.create_user, b.update_at, b.update_user
+            SELECT b.id, b.type, b.tenant_id, b.member_id
             FROM bundles b
             INNER JOIN temp_member_ids t ON b.member_id = t.member_id
             ORDER BY b.member_id, b.id";
@@ -202,13 +200,14 @@ public class PostgreSqlRepository
                 Type = reader.GetInt32(1),
                 TenantId = reader.GetString(2),
                 MemberId = reader.GetGuid(3),
-                CreateAt = reader.GetDateTime(4),
-                CreateUser = reader.IsDBNull(5) ? null : reader.GetString(5),
-                UpdateAt = reader.GetDateTime(6),
-                UpdateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
                 // Use mock data for sensitive fields
                 Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension()
+                Extensions = MockDataProvider.GetBundleExtension(),
+                // Set default values for audit fields (not queried from DB)
+                CreateAt = DateTime.UtcNow,
+                CreateUser = null,
+                UpdateAt = DateTime.UtcNow,
+                UpdateUser = null
             };
             
             if (!bundlesByMember.ContainsKey(bundle.MemberId))
