@@ -65,6 +65,22 @@ public static class MockDataProvider
     private static readonly Lazy<JsonDocument> _memberProfile = new(() => JsonDocument.Parse(_memberProfileJson));
     private static readonly Lazy<JsonDocument> _bundleExtension = new(() => JsonDocument.Parse(_bundleExtensionJson));
 
+    // Mock data constants
+    private const string BundleKeyValue = "648359bb1a20cad74242c5b3";
+    
+    private static readonly string[] _memberTags = new[]
+    {
+        "40916-MemberCollection-Tag-20240327121034",
+        "40916-MemberCollection-Tag-20240425122710",
+        "40916-MemberCollection-Tag-20240527164707",
+        "40916-MemberCollection-Tag-20241129112310",
+        "40916-MemberCollection-Tag-20241129110007",
+        "NAPL::A+",
+        "40916-MemberCollection-Tag-20251003115836",
+        "ProfileConflict::BarcodeValue",
+        "ProfileConflict::MigrateJoinDateTime"
+    };
+
     /// <summary>
     /// Gets the mock extension data for members.
     /// </summary>
@@ -73,18 +89,7 @@ public static class MockDataProvider
     /// <summary>
     /// Gets the mock tags array for members.
     /// </summary>
-    public static string[] GetMemberTags() => new[]
-    {
-        "40916-MemberCollection-Tag-20240327121034",
-        "40916-MemberCollection-Tag-20240425122710",
-        "40916-MemberCollection-Tag-20240527164707",
-        "40916-MemberCollection-Tag-20241129112310",
-        "40916-MemberCollection-Tag-20241129110007",
-        "NAPL::A+",
-        "40916MemberCollection-Tag-20251003115836",
-        "ProfileConflict::BarcodeValue",
-        "ProfileConflict::MigrateJoinDateTime"
-    };
+    public static string[] GetMemberTags() => _memberTags;
 
     /// <summary>
     /// Gets the mock profile data for members.
@@ -104,5 +109,5 @@ public static class MockDataProvider
     /// <summary>
     /// Gets the mock key value for bundles.
     /// </summary>
-    public static string GetBundleKey() => "648359bb1a20cad74242c5b3";
+    public static string GetBundleKey() => BundleKeyValue;
 }
