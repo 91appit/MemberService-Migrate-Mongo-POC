@@ -65,11 +65,7 @@ public static class DataConverter
             Id = bundle.Id,
             Key = bundle.Key,
             Type = bundle.Type,
-            Extensions = ConvertJsonDocumentToBsonDocument(bundle.Extensions),
-            CreateAt = bundle.CreateAt,
-            CreateUser = bundle.CreateUser,
-            UpdateAt = bundle.UpdateAt,
-            UpdateUser = bundle.UpdateUser
+            Extensions = ConvertJsonDocumentToBsonDocument(bundle.Extensions)
         };
     }
 
