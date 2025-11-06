@@ -36,6 +36,16 @@ public class MigrationService
         _settings = settings;
     }
 
+    private static void LogException(Exception ex, string context)
+    {
+        Console.WriteLine($"{context}: {ex.Message}");
+        if (ex.InnerException != null)
+        {
+            Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
+        }
+        Console.WriteLine($"Full exception details:\n{ex}");
+    }
+
     public async Task MigrateAsync()
     {
         Console.WriteLine($"Starting migration in {_settings.Mode} mode...");
@@ -161,12 +171,7 @@ public class MigrationService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error while reading members batch (embedding mode): {ex.Message}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                }
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                LogException(ex, "Producer error while reading members batch (embedding mode)");
                 channel.Writer.Complete(ex);
                 throw;
             }
@@ -224,12 +229,7 @@ public class MigrationService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Consumer error while processing member batch: {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                    }
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    LogException(ex, "Consumer error while processing member batch");
                     cancellationTokenSource.Cancel();
                     throw;
                 }
@@ -304,12 +304,7 @@ public class MigrationService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error while reading bundles batch (embedding mode): {ex.Message}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                }
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                LogException(ex, "Producer error while reading bundles batch (embedding mode)");
                 channel.Writer.Complete(ex);
                 throw;
             }
@@ -369,12 +364,7 @@ public class MigrationService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Consumer error while processing bundle batch: {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                    }
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    LogException(ex, "Consumer error while processing bundle batch");
                     cancellationTokenSource.Cancel();
                     throw;
                 }
@@ -538,12 +528,7 @@ public class MigrationService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error while reading members batch (referencing mode): {ex.Message}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                }
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                LogException(ex, "Producer error while reading members batch (referencing mode)");
                 channel.Writer.Complete(ex);
                 throw;
             }
@@ -602,12 +587,7 @@ public class MigrationService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Consumer error while processing member documents (referencing mode): {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                    }
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    LogException(ex, "Consumer error while processing member documents (referencing mode)");
                     cancellationTokenSource.Cancel();
                     throw;
                 }
@@ -682,12 +662,7 @@ public class MigrationService
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error while reading bundles batch (referencing mode): {ex.Message}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                }
-                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                LogException(ex, "Producer error while reading bundles batch (referencing mode)");
                 channel.Writer.Complete(ex);
                 throw;
             }
@@ -746,12 +721,7 @@ public class MigrationService
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Consumer error while processing bundle documents (referencing mode): {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
-                    }
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    LogException(ex, "Consumer error while processing bundle documents (referencing mode)");
                     cancellationTokenSource.Cancel();
                     throw;
                 }
