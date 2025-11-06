@@ -11,6 +11,10 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Two Migration Modes**:
   - **Embedding Mode**: Embeds bundles data directly into member documents
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
+- **Concurrent Processing Pipeline**:
+  - Producer-consumer pattern for overlapping I/O operations
+  - Configurable number of concurrent batch processors
+  - Better resource utilization (CPU, network, database connections)
 - **Cursor-Based Pagination**: 
   - Uses efficient cursor pagination (`id > last_id`) instead of OFFSET/LIMIT
   - Consistent query performance regardless of dataset size or position
@@ -99,10 +103,23 @@ Edit `appsettings.json` to configure the application:
   },
   "Migration": {
     "Mode": "Embedding",  // or "Referencing"
-    "BatchSize": 1000
+    "BatchSize": 1000,
+    "MaxDegreeOfParallelism": 4,
+    "ConcurrentBatchProcessors": 3,
+    "MaxChannelCapacity": 10
   }
 }
 ```
+
+### Configuration Parameters
+
+- **Mode**: Migration mode (`Embedding` or `Referencing`)
+- **BatchSize**: Number of records to process per batch (default: 1000)
+- **MaxDegreeOfParallelism**: Number of parallel threads for data conversion within each batch (default: 4)
+- **ConcurrentBatchProcessors**: Number of concurrent workers processing batches (default: 3)
+- **MaxChannelCapacity**: Maximum number of batches queued in memory (default: 10)
+
+See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 
 ### Migration Modes
 
@@ -285,9 +302,17 @@ This migration tool has been optimized for large-scale data migrations (millions
 - Monitoring and troubleshooting
 - Real-time performance metrics
 
+See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for information on:
+
+- Concurrent processing architecture
+- Producer-consumer pipeline pattern
+- Configuration tuning for concurrent processing
+- Resource utilization improvements
+
 **Expected Performance:**
 - Before: ~3 hours for 5M members + 20M bundles
-- After: ~55-60 minutes for 5M members + 20M bundles
+- After (with optimizations): ~55-60 minutes for 5M members + 20M bundles
+- After (with concurrent processing): Additional 30-80% improvement depending on hardware
 
 ## Non-Goals
 

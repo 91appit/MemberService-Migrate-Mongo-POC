@@ -1,8 +1,24 @@
 using MemberServiceMigration.Configuration;
 using MemberServiceMigration.Database;
 using MongoDB.Driver;
+using System.Threading.Channels;
 
 namespace MemberServiceMigration.Migration;
+
+// Helper classes for concurrent processing
+internal class MemberBatch
+{
+    public List<Models.Member> Members { get; set; } = new();
+    public Guid? LastMemberId { get; set; }
+    public int BatchNumber { get; set; }
+}
+
+internal class BundleBatch
+{
+    public List<Models.Bundle> Bundles { get; set; } = new();
+    public long? LastBundleId { get; set; }
+    public int BatchNumber { get; set; }
+}
 
 public class MigrationService
 {
@@ -73,126 +89,18 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
 
         // Phase 1: Migrate all members first (without bundles for better performance)
-        Console.WriteLine("Phase 1: Migrating members without bundles...");
+        Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
         
-        var processedMemberCount = 0;
-        Guid? lastMemberId = null;
-        
-        while (true)
-        {
-            var batchStartTime = DateTime.UtcNow;
-            
-            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
-            
-            if (!membersBatch.Any())
-            {
-                break;
-            }
-            
-            // Convert members to documents without bundles in parallel
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
-            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocumentEmbedding>();
-            
-            Parallel.ForEach(membersBatch, parallelOptions, member =>
-            {
-                var document = DataConverter.ConvertToMemberDocumentEmbedding(member, null);
-                documents.Add(document);
-            });
-
-            var documentsList = documents.ToList();
-            if (documentsList.Any())
-            {
-                var options = new InsertManyOptions { IsOrdered = false };
-                await membersCollection.InsertManyAsync(documentsList, options);
-                processedMemberCount += documentsList.Count;
-                
-                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
-                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                var batchNumber = processedMemberCount / _settings.BatchSize;
-                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
-                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
-                
-                Console.WriteLine($"Members Batch {batchNumber}: {membersBatch.Count} members in {batchTime:F2}s");
-                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
-            }
-            
-            lastMemberId = membersBatch.Last().Id;
-        }
+        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers);
         
         var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
         // Phase 2: Migrate bundles and update member documents
-        Console.WriteLine("Phase 2: Migrating bundles and updating member documents...");
+        Console.WriteLine($"Phase 2: Migrating bundles and updating member documents using {_settings.ConcurrentBatchProcessors} concurrent processors...");
         
         var bundlesStartTime = DateTime.UtcNow;
-        var processedBundleCount = 0;
-        long? lastBundleId = null;
-        
-        // Group bundles by member to prepare bulk updates
-        var bundleUpdateBuffer = new Dictionary<Guid, List<Models.MongoDB.BundleEmbedded>>();
-        const int updateBatchSize = 100; // Update 100 members at a time
-        
-        while (true)
-        {
-            var batchStartTime = DateTime.UtcNow;
-            
-            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
-            
-            if (!bundlesBatch.Any())
-            {
-                break;
-            }
-            
-            // Convert bundles in parallel
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
-            var bundlesByMember = new System.Collections.Concurrent.ConcurrentDictionary<Guid, System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>>();
-            
-            Parallel.ForEach(bundlesBatch, parallelOptions, bundle =>
-            {
-                var bundleEmbedded = DataConverter.ConvertToBundleEmbedded(bundle);
-                var memberBundles = bundlesByMember.GetOrAdd(bundle.MemberId, _ => new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>());
-                memberBundles.Add(bundleEmbedded);
-            });
-            
-            // Add to update buffer
-            foreach (var kvp in bundlesByMember)
-            {
-                if (!bundleUpdateBuffer.ContainsKey(kvp.Key))
-                {
-                    bundleUpdateBuffer[kvp.Key] = new List<Models.MongoDB.BundleEmbedded>();
-                }
-                bundleUpdateBuffer[kvp.Key].AddRange(kvp.Value);
-            }
-            
-            processedBundleCount += bundlesBatch.Count;
-            
-            // Perform bulk updates when buffer reaches threshold
-            if (bundleUpdateBuffer.Count >= updateBatchSize)
-            {
-                await UpdateMemberBundlesAsync(membersCollection, bundleUpdateBuffer);
-                bundleUpdateBuffer.Clear();
-            }
-            
-            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
-            var elapsedTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
-            var batchNumber = processedBundleCount / _settings.BatchSize;
-            var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-            var estimatedRemainingBatches = (totalBundles - processedBundleCount) / (double)_settings.BatchSize;
-            var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
-            
-            Console.WriteLine($"Bundles Batch {batchNumber}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
-            Console.WriteLine($"Progress: {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
-            
-            lastBundleId = bundlesBatch.Last().Id;
-        }
-        
-        // Update remaining members in buffer
-        if (bundleUpdateBuffer.Any())
-        {
-            await UpdateMemberBundlesAsync(membersCollection, bundleUpdateBuffer);
-        }
+        var processedBundleCount = await MigrateBundlesAndUpdateMembersConcurrentlyAsync(membersCollection, totalBundles);
         
         var bundlesTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
         Console.WriteLine($"Phase 2 completed in {TimeSpan.FromSeconds(bundlesTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
@@ -207,9 +115,280 @@ public class MigrationService
         Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");
     }
 
+    private async Task<int> MigrateMembersWithoutBundlesConcurrentlyAsync(
+        IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection,
+        long totalCount)
+    {
+        var processedCount = 0;
+        var startTime = DateTime.UtcNow;
+        var batchNumber = 0;
+        var cancellationTokenSource = new CancellationTokenSource();
+        
+        // Create a bounded channel for producer-consumer pattern
+        var channel = Channel.CreateBounded<MemberBatch>(new BoundedChannelOptions(_settings.MaxChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // Producer task: Read batches from PostgreSQL
+        var producerTask = Task.Run(async () =>
+        {
+            try
+            {
+                Guid? lastMemberId = null;
+                var currentBatchNumber = 0;
+                
+                while (true)
+                {
+                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                    
+                    if (!membersBatch.Any())
+                    {
+                        break;
+                    }
+                    
+                    await channel.Writer.WriteAsync(new MemberBatch
+                    {
+                        Members = membersBatch,
+                        LastMemberId = membersBatch.Last().Id,
+                        BatchNumber = ++currentBatchNumber
+                    }, cancellationTokenSource.Token);
+                    
+                    lastMemberId = membersBatch.Last().Id;
+                }
+                
+                channel.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Producer error: {ex.Message}");
+                channel.Writer.Complete(ex);
+                throw;
+            }
+        }, cancellationTokenSource.Token);
+
+        // Consumer tasks: Process and write batches to MongoDB
+        var consumerTasks = new List<Task>();
+        var lockObject = new object();
+        
+        for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
+        {
+            var consumerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var batch in channel.Reader.ReadAllAsync(cancellationTokenSource.Token))
+                    {
+                        var batchStartTime = DateTime.UtcNow;
+                        
+                        // Convert members to documents without bundles in parallel
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+                        var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocumentEmbedding>();
+                        
+                        Parallel.ForEach(batch.Members, parallelOptions, member =>
+                        {
+                            var document = DataConverter.ConvertToMemberDocumentEmbedding(member, null);
+                            documents.Add(document);
+                        });
+
+                        var documentsList = documents.ToList();
+                        if (documentsList.Any())
+                        {
+                            var options = new InsertManyOptions { IsOrdered = false };
+                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            
+                            lock (lockObject)
+                            {
+                                processedCount += documentsList.Count;
+                                batchNumber = batch.BatchNumber;
+                                
+                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
+                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
+                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                
+                                Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
+                                Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Consumer error: {ex.Message}");
+                    cancellationTokenSource.Cancel();
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            consumerTasks.Add(consumerTask);
+        }
+
+        // Wait for producer and all consumers to complete
+        try
+        {
+            await producerTask;
+            await Task.WhenAll(consumerTasks);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during concurrent migration: {ex.Message}");
+            cancellationTokenSource.Cancel();
+            throw;
+        }
+        finally
+        {
+            cancellationTokenSource.Dispose();
+        }
+
+        return processedCount;
+    }
+
+    private async Task<int> MigrateBundlesAndUpdateMembersConcurrentlyAsync(
+        IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection,
+        long totalCount)
+    {
+        var processedCount = 0;
+        var startTime = DateTime.UtcNow;
+        var batchNumber = 0;
+        var cancellationTokenSource = new CancellationTokenSource();
+        
+        // Create a bounded channel for producer-consumer pattern
+        var channel = Channel.CreateBounded<BundleBatch>(new BoundedChannelOptions(_settings.MaxChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // Producer task: Read batches from PostgreSQL
+        var producerTask = Task.Run(async () =>
+        {
+            try
+            {
+                long? lastBundleId = null;
+                var currentBatchNumber = 0;
+                
+                while (true)
+                {
+                    var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
+                    
+                    if (!bundlesBatch.Any())
+                    {
+                        break;
+                    }
+                    
+                    await channel.Writer.WriteAsync(new BundleBatch
+                    {
+                        Bundles = bundlesBatch,
+                        LastBundleId = bundlesBatch.Last().Id,
+                        BatchNumber = ++currentBatchNumber
+                    }, cancellationTokenSource.Token);
+                    
+                    lastBundleId = bundlesBatch.Last().Id;
+                }
+                
+                channel.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Producer error: {ex.Message}");
+                channel.Writer.Complete(ex);
+                throw;
+            }
+        }, cancellationTokenSource.Token);
+
+        // Consumer tasks: Process and update member documents
+        var consumerTasks = new List<Task>();
+        var lockObject = new object();
+        
+        for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
+        {
+            var consumerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var batch in channel.Reader.ReadAllAsync(cancellationTokenSource.Token))
+                    {
+                        var batchStartTime = DateTime.UtcNow;
+                        
+                        // Convert bundles in parallel
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+                        var bundlesByMember = new System.Collections.Concurrent.ConcurrentDictionary<Guid, System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>>();
+                        
+                        Parallel.ForEach(batch.Bundles, parallelOptions, bundle =>
+                        {
+                            var bundleEmbedded = DataConverter.ConvertToBundleEmbedded(bundle);
+                            var memberBundles = bundlesByMember.GetOrAdd(bundle.MemberId, _ => new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleEmbedded>());
+                            memberBundles.Add(bundleEmbedded);
+                        });
+                        
+                        // Perform bulk updates
+                        var bundleUpdateDict = bundlesByMember.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => kvp.Value.ToList()
+                        );
+                        
+                        await UpdateMemberBundlesAsync(collection, bundleUpdateDict, cancellationTokenSource.Token);
+                        
+                        lock (lockObject)
+                        {
+                            processedCount += batch.Bundles.Count;
+                            batchNumber = batch.BatchNumber;
+                            
+                            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                            var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                            var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
+                            var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
+                            var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                            
+                            Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
+                            Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Consumer error: {ex.Message}");
+                    cancellationTokenSource.Cancel();
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            consumerTasks.Add(consumerTask);
+        }
+
+        // Wait for producer and all consumers to complete
+        try
+        {
+            await producerTask;
+            await Task.WhenAll(consumerTasks);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during concurrent migration: {ex.Message}");
+            cancellationTokenSource.Cancel();
+            throw;
+        }
+        finally
+        {
+            cancellationTokenSource.Dispose();
+        }
+
+        return processedCount;
+    }
+
     private async Task UpdateMemberBundlesAsync(
         IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection, 
-        Dictionary<Guid, List<Models.MongoDB.BundleEmbedded>> bundlesByMemberId)
+        Dictionary<Guid, List<Models.MongoDB.BundleEmbedded>> bundlesByMemberId,
+        CancellationToken cancellationToken = default)
     {
         var bulkOps = new List<WriteModel<Models.MongoDB.MemberDocumentEmbedding>>();
         
@@ -222,7 +401,7 @@ public class MigrationService
         
         if (bulkOps.Any())
         {
-            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false });
+            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationToken);
         }
     }
 
@@ -268,109 +447,19 @@ public class MigrationService
 
         var startTime = DateTime.UtcNow;
 
-        // Migrate members
-        Console.WriteLine("Starting members migration with cursor pagination...");
+        // Migrate members with concurrent processing
+        Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
         
-        var processedMemberCount = 0;
-        Guid? lastMemberId = null;
+        var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers);
         
-        while (true)
-        {
-            var batchStartTime = DateTime.UtcNow;
-            
-            var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
-            
-            if (!membersBatch.Any())
-            {
-                break;
-            }
-            
-            // Convert to MongoDB documents in parallel for better CPU utilization
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
-            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocument>();
-            
-            Parallel.ForEach(membersBatch, parallelOptions, member =>
-            {
-                var document = DataConverter.ConvertToMemberDocument(member);
-                documents.Add(document);
-            });
-            
-            var documentsList = documents.ToList();
-
-            if (documentsList.Any())
-            {
-                var options = new InsertManyOptions { IsOrdered = false };
-                await membersCollection.InsertManyAsync(documentsList, options);
-                processedMemberCount += documentsList.Count;
-                
-                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
-                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                var batchNumber = processedMemberCount / _settings.BatchSize;
-                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                var estimatedRemainingBatches = (totalMembers - processedMemberCount) / (double)_settings.BatchSize;
-                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
-                
-                Console.WriteLine($"Batch {batchNumber}: {membersBatch.Count} members in {batchTime:F2}s");
-                Console.WriteLine($"Progress: {processedMemberCount}/{totalMembers} members ({(processedMemberCount * 100.0 / totalMembers):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
-            }
-            
-            // Update cursor to the last member ID in this batch
-            lastMemberId = membersBatch.Last().Id;
-        }
-
         var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
-        // Migrate bundles
-        Console.WriteLine("Starting bundles migration with cursor pagination...");
+        // Migrate bundles with concurrent processing
+        Console.WriteLine($"Starting concurrent bundles migration with {_settings.ConcurrentBatchProcessors} processors...");
         
         var bundlesStartTime = DateTime.UtcNow;
-        var processedBundleCount = 0;
-        long? lastBundleId = null;
-        
-        while (true)
-        {
-            var batchStartTime = DateTime.UtcNow;
-            
-            var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
-            
-            if (!bundlesBatch.Any())
-            {
-                break;
-            }
-            
-            // Convert to MongoDB documents in parallel for better CPU utilization
-            var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
-            var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleDocument>();
-            
-            Parallel.ForEach(bundlesBatch, parallelOptions, bundle =>
-            {
-                var document = DataConverter.ConvertToBundleDocument(bundle);
-                documents.Add(document);
-            });
-            
-            var documentsList = documents.ToList();
-
-            if (documentsList.Any())
-            {
-                var options = new InsertManyOptions { IsOrdered = false };
-                await bundlesCollection.InsertManyAsync(documentsList, options);
-                processedBundleCount += documentsList.Count;
-                
-                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
-                var elapsedTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
-                var batchNumber = processedBundleCount / _settings.BatchSize;
-                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                var estimatedRemainingBatches = (totalBundles - processedBundleCount) / (double)_settings.BatchSize;
-                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
-                
-                Console.WriteLine($"Batch {batchNumber}: {bundlesBatch.Count} bundles in {batchTime:F2}s");
-                Console.WriteLine($"Progress: {processedBundleCount}/{totalBundles} bundles ({(processedBundleCount * 100.0 / totalBundles):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
-            }
-            
-            // Update cursor to the last bundle ID in this batch
-            lastBundleId = bundlesBatch.Last().Id;
-        }
+        var processedBundleCount = await MigrateBundlesConcurrentlyAsync(bundlesCollection, totalBundles);
         
         var bundlesMigrationTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
         Console.WriteLine($"Bundles migration completed in {TimeSpan.FromSeconds(bundlesMigrationTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
@@ -383,5 +472,275 @@ public class MigrationService
         
         var totalTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");
+    }
+
+    private async Task<int> MigrateMembersConcurrentlyAsync(
+        IMongoCollection<Models.MongoDB.MemberDocument> collection,
+        long totalCount)
+    {
+        var processedCount = 0;
+        var startTime = DateTime.UtcNow;
+        var batchNumber = 0;
+        var cancellationTokenSource = new CancellationTokenSource();
+        
+        // Create a bounded channel for producer-consumer pattern
+        var channel = Channel.CreateBounded<MemberBatch>(new BoundedChannelOptions(_settings.MaxChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // Producer task: Read batches from PostgreSQL
+        var producerTask = Task.Run(async () =>
+        {
+            try
+            {
+                Guid? lastMemberId = null;
+                var currentBatchNumber = 0;
+                
+                while (true)
+                {
+                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                    
+                    if (!membersBatch.Any())
+                    {
+                        break;
+                    }
+                    
+                    await channel.Writer.WriteAsync(new MemberBatch
+                    {
+                        Members = membersBatch,
+                        LastMemberId = membersBatch.Last().Id,
+                        BatchNumber = ++currentBatchNumber
+                    }, cancellationTokenSource.Token);
+                    
+                    lastMemberId = membersBatch.Last().Id;
+                }
+                
+                channel.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Producer error: {ex.Message}");
+                channel.Writer.Complete(ex);
+                throw;
+            }
+        }, cancellationTokenSource.Token);
+
+        // Consumer tasks: Process and write batches to MongoDB
+        var consumerTasks = new List<Task>();
+        var lockObject = new object();
+        
+        for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
+        {
+            var consumerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var batch in channel.Reader.ReadAllAsync(cancellationTokenSource.Token))
+                    {
+                        var batchStartTime = DateTime.UtcNow;
+                        
+                        // Convert to MongoDB documents in parallel for better CPU utilization
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+                        var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.MemberDocument>();
+                        
+                        Parallel.ForEach(batch.Members, parallelOptions, member =>
+                        {
+                            var document = DataConverter.ConvertToMemberDocument(member);
+                            documents.Add(document);
+                        });
+                        
+                        var documentsList = documents.ToList();
+
+                        if (documentsList.Any())
+                        {
+                            var options = new InsertManyOptions { IsOrdered = false };
+                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            
+                            lock (lockObject)
+                            {
+                                processedCount += documentsList.Count;
+                                batchNumber = batch.BatchNumber;
+                                
+                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
+                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
+                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                
+                                Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
+                                Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Consumer error: {ex.Message}");
+                    cancellationTokenSource.Cancel();
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            consumerTasks.Add(consumerTask);
+        }
+
+        // Wait for producer and all consumers to complete
+        try
+        {
+            await producerTask;
+            await Task.WhenAll(consumerTasks);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during concurrent migration: {ex.Message}");
+            cancellationTokenSource.Cancel();
+            throw;
+        }
+        finally
+        {
+            cancellationTokenSource.Dispose();
+        }
+
+        return processedCount;
+    }
+
+    private async Task<int> MigrateBundlesConcurrentlyAsync(
+        IMongoCollection<Models.MongoDB.BundleDocument> collection,
+        long totalCount)
+    {
+        var processedCount = 0;
+        var startTime = DateTime.UtcNow;
+        var batchNumber = 0;
+        var cancellationTokenSource = new CancellationTokenSource();
+        
+        // Create a bounded channel for producer-consumer pattern
+        var channel = Channel.CreateBounded<BundleBatch>(new BoundedChannelOptions(_settings.MaxChannelCapacity)
+        {
+            FullMode = BoundedChannelFullMode.Wait
+        });
+
+        // Producer task: Read batches from PostgreSQL
+        var producerTask = Task.Run(async () =>
+        {
+            try
+            {
+                long? lastBundleId = null;
+                var currentBatchNumber = 0;
+                
+                while (true)
+                {
+                    var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
+                    
+                    if (!bundlesBatch.Any())
+                    {
+                        break;
+                    }
+                    
+                    await channel.Writer.WriteAsync(new BundleBatch
+                    {
+                        Bundles = bundlesBatch,
+                        LastBundleId = bundlesBatch.Last().Id,
+                        BatchNumber = ++currentBatchNumber
+                    }, cancellationTokenSource.Token);
+                    
+                    lastBundleId = bundlesBatch.Last().Id;
+                }
+                
+                channel.Writer.Complete();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Producer error: {ex.Message}");
+                channel.Writer.Complete(ex);
+                throw;
+            }
+        }, cancellationTokenSource.Token);
+
+        // Consumer tasks: Process and write batches to MongoDB
+        var consumerTasks = new List<Task>();
+        var lockObject = new object();
+        
+        for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
+        {
+            var consumerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await foreach (var batch in channel.Reader.ReadAllAsync(cancellationTokenSource.Token))
+                    {
+                        var batchStartTime = DateTime.UtcNow;
+                        
+                        // Convert to MongoDB documents in parallel for better CPU utilization
+                        var parallelOptions = new ParallelOptions { MaxDegreeOfParallelism = _settings.MaxDegreeOfParallelism };
+                        var documents = new System.Collections.Concurrent.ConcurrentBag<Models.MongoDB.BundleDocument>();
+                        
+                        Parallel.ForEach(batch.Bundles, parallelOptions, bundle =>
+                        {
+                            var document = DataConverter.ConvertToBundleDocument(bundle);
+                            documents.Add(document);
+                        });
+                        
+                        var documentsList = documents.ToList();
+
+                        if (documentsList.Any())
+                        {
+                            var options = new InsertManyOptions { IsOrdered = false };
+                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            
+                            lock (lockObject)
+                            {
+                                processedCount += documentsList.Count;
+                                batchNumber = batch.BatchNumber;
+                                
+                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                                var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
+                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
+                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
+                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                
+                                Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
+                                Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Consumer error: {ex.Message}");
+                    cancellationTokenSource.Cancel();
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            consumerTasks.Add(consumerTask);
+        }
+
+        // Wait for producer and all consumers to complete
+        try
+        {
+            await producerTask;
+            await Task.WhenAll(consumerTasks);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error during concurrent migration: {ex.Message}");
+            cancellationTokenSource.Cancel();
+            throw;
+        }
+        finally
+        {
+            cancellationTokenSource.Dispose();
+        }
+
+        return processedCount;
     }
 }

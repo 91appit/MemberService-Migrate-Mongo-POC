@@ -22,6 +22,8 @@ try
     Console.WriteLine($"Migration Mode: {appSettings.Migration.Mode}");
     Console.WriteLine($"Batch Size: {appSettings.Migration.BatchSize}");
     Console.WriteLine($"Max Degree of Parallelism: {appSettings.Migration.MaxDegreeOfParallelism}");
+    Console.WriteLine($"Concurrent Batch Processors: {appSettings.Migration.ConcurrentBatchProcessors}");
+    Console.WriteLine($"Max Channel Capacity: {appSettings.Migration.MaxChannelCapacity}");
     Console.WriteLine();
 
     var postgreSqlRepository = new PostgreSqlRepository(appSettings.Database.PostgreSqlConnectionString);
