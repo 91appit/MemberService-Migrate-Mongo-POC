@@ -6,6 +6,8 @@ using MemberServiceMigration.Migration;
 Console.WriteLine("=== Member Service Migration Tool ===");
 Console.WriteLine();
 
+var exitCode = 0;
+
 try
 {
     var configuration = new ConfigurationBuilder()
@@ -40,15 +42,16 @@ try
 }
 catch (Exception ex)
 {
+    Console.WriteLine();
     Console.WriteLine($"Error: {ex.Message}");
     Console.WriteLine($"Stack trace: {ex.StackTrace}");
-    return 1;
+    exitCode = 1;
 }
 
 Console.WriteLine();
 Console.WriteLine("Press any key to exit...");
 Console.ReadKey();
-return 0;
+return exitCode;
 
 static string MaskConnectionString(string connectionString)
 {
