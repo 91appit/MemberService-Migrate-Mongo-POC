@@ -106,7 +106,8 @@ Edit `appsettings.json` to configure the application:
     "BatchSize": 1000,
     "MaxDegreeOfParallelism": 4,
     "ConcurrentBatchProcessors": 3,
-    "MaxChannelCapacity": 10
+    "MaxChannelCapacity": 10,
+    "ConcurrentProducers": 1
   }
 }
 ```
@@ -118,6 +119,7 @@ Edit `appsettings.json` to configure the application:
 - **MaxDegreeOfParallelism**: Number of parallel threads for data conversion within each batch (default: 4)
 - **ConcurrentBatchProcessors**: Number of concurrent workers processing batches (default: 3)
 - **MaxChannelCapacity**: Maximum number of batches queued in memory (default: 10)
+- **ConcurrentProducers**: Number of concurrent producer tasks reading from PostgreSQL (default: 1, recommended: 2-3 for high-performance systems)
 
 See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 

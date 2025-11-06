@@ -20,6 +20,21 @@ internal class BundleBatch
     public int BatchNumber { get; set; }
 }
 
+// Helper class for ID range partitioning
+internal class MemberIdRange
+{
+    public Guid? StartId { get; set; }
+    public Guid? EndId { get; set; }
+    public int PartitionIndex { get; set; }
+}
+
+internal class BundleIdRange
+{
+    public long? StartId { get; set; }
+    public long? EndId { get; set; }
+    public int PartitionIndex { get; set; }
+}
+
 public class MigrationService
 {
     private readonly PostgreSqlRepository _postgreSqlRepository;
@@ -40,6 +55,8 @@ public class MigrationService
     {
         Console.WriteLine($"Starting migration in {_settings.Mode} mode...");
         Console.WriteLine($"Batch size: {_settings.BatchSize}");
+        Console.WriteLine($"Concurrent producers: {_settings.ConcurrentProducers}");
+        Console.WriteLine($"Concurrent batch processors: {_settings.ConcurrentBatchProcessors}");
 
         try
         {
@@ -89,7 +106,7 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
 
         // Phase 1: Migrate all members first (without bundles for better performance)
-        Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
+        Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentProducers} concurrent producers and {_settings.ConcurrentBatchProcessors} concurrent processors...");
         
         var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers);
         
@@ -97,7 +114,7 @@ public class MigrationService
         Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
         // Phase 2: Migrate bundles and update member documents
-        Console.WriteLine($"Phase 2: Migrating bundles and updating member documents using {_settings.ConcurrentBatchProcessors} concurrent processors...");
+        Console.WriteLine($"Phase 2: Migrating bundles and updating member documents using {_settings.ConcurrentProducers} concurrent producers and {_settings.ConcurrentBatchProcessors} concurrent processors...");
         
         var bundlesStartTime = DateTime.UtcNow;
         var processedBundleCount = await MigrateBundlesAndUpdateMembersConcurrentlyAsync(membersCollection, totalBundles);
@@ -129,43 +146,85 @@ public class MigrationService
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        // Producer task: Read batches from PostgreSQL
-        var producerTask = Task.Run(async () =>
+        // Calculate ID ranges for multiple producers
+        var idRanges = await CalculateMemberIdRangesAsync(_settings.ConcurrentProducers);
+        var batchNumberCounter = 0;
+        var batchNumberLock = new object();
+
+        // Producer tasks: Multiple producers reading different ID ranges from PostgreSQL
+        var producerTasks = new List<Task>();
+        
+        for (int p = 0; p < idRanges.Count; p++)
+        {
+            var range = idRanges[p];
+            var producerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    Guid? lastMemberId = range.StartId;
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        List<Models.Member> membersBatch;
+                        
+                        if (range.EndId.HasValue)
+                        {
+                            // Query with range constraint
+                            membersBatch = await _postgreSqlRepository.GetMembersBatchInRangeAsync(lastMemberId, range.EndId, _settings.BatchSize);
+                        }
+                        else
+                        {
+                            // Query without upper limit (last partition)
+                            membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                        }
+                        
+                        if (!membersBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        int currentBatchNumber;
+                        lock (batchNumberLock)
+                        {
+                            currentBatchNumber = ++batchNumberCounter;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new MemberBatch
+                        {
+                            Members = membersBatch,
+                            LastMemberId = membersBatch.Last().Id,
+                            BatchNumber = currentBatchNumber
+                        });
+                        
+                        lastMemberId = membersBatch.Last().Id;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Producer {range.PartitionIndex} error: {ex.Message}");
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            producerTasks.Add(producerTask);
+        }
+
+        // Monitor task to complete channel when all producers are done
+        var monitorTask = Task.Run(async () =>
         {
             try
             {
-                Guid? lastMemberId = null;
-                var currentBatchNumber = 0;
-                
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
-                    
-                    if (!membersBatch.Any())
-                    {
-                        break;
-                    }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new MemberBatch
-                    {
-                        Members = membersBatch,
-                        LastMemberId = membersBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastMemberId = membersBatch.Last().Id;
-                }
-                
+                await Task.WhenAll(producerTasks);
                 channel.Writer.Complete();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error: {ex.Message}");
+                Console.WriteLine($"Producer monitor error: {ex.Message}");
                 channel.Writer.Complete(ex);
                 throw;
             }
-        }, cancellationTokenSource.Token);
+        });
 
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
@@ -228,11 +287,11 @@ public class MigrationService
             consumerTasks.Add(consumerTask);
         }
 
-        // Wait for producer and all consumers to complete
+        // Wait for all producers, monitor and all consumers to complete
         try
         {
-            await producerTask;
             await Task.WhenAll(consumerTasks);
+            await monitorTask;
         }
         catch (Exception ex)
         {
@@ -262,43 +321,85 @@ public class MigrationService
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        // Producer task: Read batches from PostgreSQL
-        var producerTask = Task.Run(async () =>
+        // Calculate ID ranges for multiple producers
+        var idRanges = await CalculateBundleIdRangesAsync(_settings.ConcurrentProducers);
+        var batchNumberCounter = 0;
+        var batchNumberLock = new object();
+
+        // Producer tasks: Multiple producers reading different ID ranges from PostgreSQL
+        var producerTasks = new List<Task>();
+        
+        for (int p = 0; p < idRanges.Count; p++)
+        {
+            var range = idRanges[p];
+            var producerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    long? lastBundleId = range.StartId;
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        List<Models.Bundle> bundlesBatch;
+                        
+                        if (range.EndId.HasValue)
+                        {
+                            // Query with range constraint
+                            bundlesBatch = await _postgreSqlRepository.GetBundlesBatchInRangeAsync(lastBundleId, range.EndId, _settings.BatchSize);
+                        }
+                        else
+                        {
+                            // Query without upper limit (last partition)
+                            bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
+                        }
+                        
+                        if (!bundlesBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        int currentBatchNumber;
+                        lock (batchNumberLock)
+                        {
+                            currentBatchNumber = ++batchNumberCounter;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new BundleBatch
+                        {
+                            Bundles = bundlesBatch,
+                            LastBundleId = bundlesBatch.Last().Id,
+                            BatchNumber = currentBatchNumber
+                        });
+                        
+                        lastBundleId = bundlesBatch.Last().Id;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Producer {range.PartitionIndex} error: {ex.Message}");
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            producerTasks.Add(producerTask);
+        }
+
+        // Monitor task to complete channel when all producers are done
+        var monitorTask = Task.Run(async () =>
         {
             try
             {
-                long? lastBundleId = null;
-                var currentBatchNumber = 0;
-                
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
-                    
-                    if (!bundlesBatch.Any())
-                    {
-                        break;
-                    }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new BundleBatch
-                    {
-                        Bundles = bundlesBatch,
-                        LastBundleId = bundlesBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastBundleId = bundlesBatch.Last().Id;
-                }
-                
+                await Task.WhenAll(producerTasks);
                 channel.Writer.Complete();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error: {ex.Message}");
+                Console.WriteLine($"Producer monitor error: {ex.Message}");
                 channel.Writer.Complete(ex);
                 throw;
             }
-        }, cancellationTokenSource.Token);
+        });
 
         // Consumer tasks: Process and update member documents
         var consumerTasks = new List<Task>();
@@ -363,11 +464,11 @@ public class MigrationService
             consumerTasks.Add(consumerTask);
         }
 
-        // Wait for producer and all consumers to complete
+        // Wait for all producers, monitor and all consumers to complete
         try
         {
-            await producerTask;
             await Task.WhenAll(consumerTasks);
+            await monitorTask;
         }
         catch (Exception ex)
         {
@@ -446,7 +547,7 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
 
         // Migrate members with concurrent processing
-        Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
+        Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentProducers} concurrent producers and {_settings.ConcurrentBatchProcessors} processors...");
         
         var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers);
         
@@ -454,7 +555,7 @@ public class MigrationService
         Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
         // Migrate bundles with concurrent processing
-        Console.WriteLine($"Starting concurrent bundles migration with {_settings.ConcurrentBatchProcessors} processors...");
+        Console.WriteLine($"Starting concurrent bundles migration with {_settings.ConcurrentProducers} concurrent producers and {_settings.ConcurrentBatchProcessors} processors...");
         
         var bundlesStartTime = DateTime.UtcNow;
         var processedBundleCount = await MigrateBundlesConcurrentlyAsync(bundlesCollection, totalBundles);
@@ -486,43 +587,85 @@ public class MigrationService
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        // Producer task: Read batches from PostgreSQL
-        var producerTask = Task.Run(async () =>
+        // Calculate ID ranges for multiple producers
+        var idRanges = await CalculateMemberIdRangesAsync(_settings.ConcurrentProducers);
+        var batchNumberCounter = 0;
+        var batchNumberLock = new object();
+
+        // Producer tasks: Multiple producers reading different ID ranges from PostgreSQL
+        var producerTasks = new List<Task>();
+        
+        for (int p = 0; p < idRanges.Count; p++)
+        {
+            var range = idRanges[p];
+            var producerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    Guid? lastMemberId = range.StartId;
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        List<Models.Member> membersBatch;
+                        
+                        if (range.EndId.HasValue)
+                        {
+                            // Query with range constraint
+                            membersBatch = await _postgreSqlRepository.GetMembersBatchInRangeAsync(lastMemberId, range.EndId, _settings.BatchSize);
+                        }
+                        else
+                        {
+                            // Query without upper limit (last partition)
+                            membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                        }
+                        
+                        if (!membersBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        int currentBatchNumber;
+                        lock (batchNumberLock)
+                        {
+                            currentBatchNumber = ++batchNumberCounter;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new MemberBatch
+                        {
+                            Members = membersBatch,
+                            LastMemberId = membersBatch.Last().Id,
+                            BatchNumber = currentBatchNumber
+                        });
+                        
+                        lastMemberId = membersBatch.Last().Id;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Producer {range.PartitionIndex} error: {ex.Message}");
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            producerTasks.Add(producerTask);
+        }
+
+        // Monitor task to complete channel when all producers are done
+        var monitorTask = Task.Run(async () =>
         {
             try
             {
-                Guid? lastMemberId = null;
-                var currentBatchNumber = 0;
-                
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
-                    
-                    if (!membersBatch.Any())
-                    {
-                        break;
-                    }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new MemberBatch
-                    {
-                        Members = membersBatch,
-                        LastMemberId = membersBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastMemberId = membersBatch.Last().Id;
-                }
-                
+                await Task.WhenAll(producerTasks);
                 channel.Writer.Complete();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error: {ex.Message}");
+                Console.WriteLine($"Producer monitor error: {ex.Message}");
                 channel.Writer.Complete(ex);
                 throw;
             }
-        }, cancellationTokenSource.Token);
+        });
 
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
@@ -586,11 +729,11 @@ public class MigrationService
             consumerTasks.Add(consumerTask);
         }
 
-        // Wait for producer and all consumers to complete
+        // Wait for all producers, monitor and all consumers to complete
         try
         {
-            await producerTask;
             await Task.WhenAll(consumerTasks);
+            await monitorTask;
         }
         catch (Exception ex)
         {
@@ -620,43 +763,85 @@ public class MigrationService
             FullMode = BoundedChannelFullMode.Wait
         });
 
-        // Producer task: Read batches from PostgreSQL
-        var producerTask = Task.Run(async () =>
+        // Calculate ID ranges for multiple producers
+        var idRanges = await CalculateBundleIdRangesAsync(_settings.ConcurrentProducers);
+        var batchNumberCounter = 0;
+        var batchNumberLock = new object();
+
+        // Producer tasks: Multiple producers reading different ID ranges from PostgreSQL
+        var producerTasks = new List<Task>();
+        
+        for (int p = 0; p < idRanges.Count; p++)
+        {
+            var range = idRanges[p];
+            var producerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    long? lastBundleId = range.StartId;
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
+                    {
+                        List<Models.Bundle> bundlesBatch;
+                        
+                        if (range.EndId.HasValue)
+                        {
+                            // Query with range constraint
+                            bundlesBatch = await _postgreSqlRepository.GetBundlesBatchInRangeAsync(lastBundleId, range.EndId, _settings.BatchSize);
+                        }
+                        else
+                        {
+                            // Query without upper limit (last partition)
+                            bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
+                        }
+                        
+                        if (!bundlesBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        int currentBatchNumber;
+                        lock (batchNumberLock)
+                        {
+                            currentBatchNumber = ++batchNumberCounter;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new BundleBatch
+                        {
+                            Bundles = bundlesBatch,
+                            LastBundleId = bundlesBatch.Last().Id,
+                            BatchNumber = currentBatchNumber
+                        });
+                        
+                        lastBundleId = bundlesBatch.Last().Id;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Producer {range.PartitionIndex} error: {ex.Message}");
+                    throw;
+                }
+            }, cancellationTokenSource.Token);
+            
+            producerTasks.Add(producerTask);
+        }
+
+        // Monitor task to complete channel when all producers are done
+        var monitorTask = Task.Run(async () =>
         {
             try
             {
-                long? lastBundleId = null;
-                var currentBatchNumber = 0;
-                
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
-                    
-                    if (!bundlesBatch.Any())
-                    {
-                        break;
-                    }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new BundleBatch
-                    {
-                        Bundles = bundlesBatch,
-                        LastBundleId = bundlesBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastBundleId = bundlesBatch.Last().Id;
-                }
-                
+                await Task.WhenAll(producerTasks);
                 channel.Writer.Complete();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Producer error: {ex.Message}");
+                Console.WriteLine($"Producer monitor error: {ex.Message}");
                 channel.Writer.Complete(ex);
                 throw;
             }
-        }, cancellationTokenSource.Token);
+        });
 
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
@@ -720,11 +905,11 @@ public class MigrationService
             consumerTasks.Add(consumerTask);
         }
 
-        // Wait for producer and all consumers to complete
+        // Wait for all producers, monitor and all consumers to complete
         try
         {
-            await producerTask;
             await Task.WhenAll(consumerTasks);
+            await monitorTask;
         }
         catch (Exception ex)
         {
@@ -738,5 +923,127 @@ public class MigrationService
         }
 
         return processedCount;
+    }
+
+    private List<BundleIdRange> CalculateBundleIdRanges(long? minId, long? maxId, int numProducers)
+    {
+        var ranges = new List<BundleIdRange>();
+        
+        if (!minId.HasValue || !maxId.HasValue || numProducers <= 0)
+        {
+            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        if (numProducers == 1)
+        {
+            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        var totalRange = maxId.Value - minId.Value + 1;
+        var rangeSize = totalRange / numProducers;
+        
+        for (int i = 0; i < numProducers; i++)
+        {
+            long? start = i == 0 ? null : minId.Value + (i * rangeSize);
+            long? end = i == numProducers - 1 ? null : minId.Value + ((i + 1) * rangeSize) - 1;
+            
+            ranges.Add(new BundleIdRange
+            {
+                StartId = start,
+                EndId = end,
+                PartitionIndex = i
+            });
+        }
+        
+        return ranges;
+    }
+
+    private async Task<List<BundleIdRange>> CalculateBundleIdRangesAsync(int numProducers)
+    {
+        var ranges = new List<BundleIdRange>();
+        
+        if (numProducers <= 0)
+        {
+            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        if (numProducers == 1)
+        {
+            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        var (minId, maxId) = await _postgreSqlRepository.GetBundlesIdRangeAsync();
+        
+        if (!minId.HasValue || !maxId.HasValue)
+        {
+            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        var totalRange = maxId.Value - minId.Value + 1;
+        var rangeSize = totalRange / numProducers;
+        
+        for (int i = 0; i < numProducers; i++)
+        {
+            long? start = i == 0 ? null : minId.Value + (i * rangeSize);
+            long? end = i == numProducers - 1 ? null : minId.Value + ((i + 1) * rangeSize) - 1;
+            
+            ranges.Add(new BundleIdRange
+            {
+                StartId = start,
+                EndId = end,
+                PartitionIndex = i
+            });
+        }
+        
+        return ranges;
+    }
+
+    private async Task<List<MemberIdRange>> CalculateMemberIdRangesAsync(int numProducers)
+    {
+        var ranges = new List<MemberIdRange>();
+        
+        if (numProducers <= 0)
+        {
+            ranges.Add(new MemberIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        if (numProducers == 1)
+        {
+            ranges.Add(new MemberIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        // For UUIDs, we'll query sample IDs at regular intervals to create partitions
+        var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
+        
+        if (totalMembers == 0)
+        {
+            ranges.Add(new MemberIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+
+        var membersPerProducer = totalMembers / numProducers;
+        var sampleIds = await _postgreSqlRepository.GetMemberIdSamplesAsync(numProducers - 1, membersPerProducer);
+        
+        for (int i = 0; i < numProducers; i++)
+        {
+            Guid? startId = i == 0 ? null : sampleIds[i - 1];
+            Guid? endId = i == numProducers - 1 ? null : sampleIds[i];
+            
+            ranges.Add(new MemberIdRange
+            {
+                StartId = startId,
+                EndId = endId,
+                PartitionIndex = i
+            });
+        }
+        
+        return ranges;
     }
 }

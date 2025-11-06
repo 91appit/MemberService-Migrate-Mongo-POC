@@ -20,6 +20,7 @@ public class MigrationSettings
     public int MaxDegreeOfParallelism { get; set; } = 4;
     public int ConcurrentBatchProcessors { get; set; } = 3;
     public int MaxChannelCapacity { get; set; } = 10;
+    public int ConcurrentProducers { get; set; } = 1;
 }
 
 public enum MigrationMode

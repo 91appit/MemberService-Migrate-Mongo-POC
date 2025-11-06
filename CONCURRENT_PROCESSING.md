@@ -6,7 +6,7 @@ This document describes the concurrent processing enhancement implemented to imp
 
 ## What Changed
 
-### Before (Sequential Processing)
+### Version 1: Sequential Processing (Original)
 The migration process was sequential:
 1. Read a batch from PostgreSQL
 2. Convert data in parallel (CPU-bound)
@@ -15,13 +15,25 @@ The migration process was sequential:
 
 **Problem**: While converting or writing one batch, the program was idle in terms of I/O. Database connections and network bandwidth were underutilized.
 
-### After (Concurrent Pipeline Processing)
-The migration now uses a **producer-consumer pattern** with concurrent processing:
-1. **Producer**: Continuously reads batches from PostgreSQL asynchronously
-2. **Consumers**: Multiple workers process and write batches concurrently
+### Version 2: Concurrent Pipeline Processing (First Enhancement)
+The migration uses a **producer-consumer pattern** with concurrent processing:
+1. **Single Producer**: Continuously reads batches from PostgreSQL asynchronously
+2. **Multiple Consumers**: N workers process and write batches concurrently
 3. **Pipeline**: While one batch is being written to MongoDB, the next batch can be read from PostgreSQL and converted
 
 **Benefit**: Better resource utilization through overlapping I/O operations and parallel processing.
+
+### Version 3: Multiple Concurrent Producers (Current - NEW!)
+The migration now supports **multiple concurrent producers** reading from PostgreSQL:
+1. **Multiple Producers**: M producers read different data ranges from PostgreSQL concurrently
+2. **Multiple Consumers**: N workers process and write batches concurrently
+3. **Enhanced Pipeline**: Multiple producers can saturate the channel faster, keeping consumers busy
+
+**Benefits**:
+- Even better PostgreSQL connection utilization
+- Reduced I/O wait time through parallel queries
+- Better throughput when PostgreSQL can handle concurrent connections
+- Data correctness maintained through range-based partitioning
 
 ## Architecture
 
@@ -29,24 +41,46 @@ The migration now uses a **producer-consumer pattern** with concurrent processin
 We use `System.Threading.Channels` for efficient producer-consumer communication:
 - **Bounded Channel**: Controls memory usage by limiting queue depth
 - **Async Operations**: Non-blocking reads and writes
-- **Multiple Consumers**: N workers processing concurrently
+- **Multiple Producers & Consumers**: M producers and N consumers processing concurrently
 
-### Processing Flow
+### Processing Flow (with Concurrent Producers)
 
 ```
-PostgreSQL                Channel              MongoDB
-    |                        |                    |
-    |---> Producer --------> |                    |
-    |     (Read Batch)       |                    |
-    |                        |---> Consumer 1 --->|
-    |                        |    (Convert+Write) |
-    |                        |                    |
-    |                        |---> Consumer 2 --->|
-    |                        |    (Convert+Write) |
-    |                        |                    |
-    |                        |---> Consumer 3 --->|
-    |                        |    (Convert+Write) |
+PostgreSQL                   Channel              MongoDB
+    |                           |                    |
+    |---> Producer 1 ---------> |                    |
+    |     (Range 1)             |                    |
+    |                           |---> Consumer 1 --->|
+    |---> Producer 2 ---------> |    (Convert+Write) |
+    |     (Range 2)             |                    |
+    |                           |---> Consumer 2 --->|
+    |---> Producer 3 ---------> |    (Convert+Write) |
+    |     (Range 3)             |                    |
+    |                           |---> Consumer 3 --->|
+    |                           |    (Convert+Write) |
 ```
+
+### Range-Based Partitioning
+
+To ensure data correctness with multiple concurrent producers, we partition the data by ID ranges:
+
+**For Bundles (Sequential Long IDs)**:
+- Calculate min and max bundle IDs
+- Divide the range evenly among producers
+- Each producer handles: `id > startId AND id <= endId`
+- Example with 3 producers and IDs 1-3000:
+  - Producer 1: `id <= 1000`
+  - Producer 2: `id > 1000 AND id <= 2000`
+  - Producer 3: `id > 2000`
+
+**For Members (UUID IDs)**:
+- Sample member IDs at regular intervals using OFFSET
+- Create partitions based on UUID ordering in PostgreSQL
+- Each producer handles a specific UUID range
+- Example with 3 producers:
+  - Producer 1: `id <= <uuid_at_33%>`
+  - Producer 2: `id > <uuid_at_33%> AND id <= <uuid_at_66%>`
+  - Producer 3: `id > <uuid_at_66%>`
 
 ## Configuration
 
@@ -59,7 +93,8 @@ PostgreSQL                Channel              MongoDB
     "BatchSize": 1000,
     "MaxDegreeOfParallelism": 4,
     "ConcurrentBatchProcessors": 3,
-    "MaxChannelCapacity": 10
+    "MaxChannelCapacity": 10,
+    "ConcurrentProducers": 1
   }
 }
 ```
@@ -72,6 +107,7 @@ PostgreSQL                Channel              MongoDB
 | `MaxDegreeOfParallelism` | 4 | Number of parallel threads for data conversion within each batch |
 | `ConcurrentBatchProcessors` | 3 | Number of concurrent consumer workers processing batches |
 | `MaxChannelCapacity` | 10 | Maximum number of batches queued in the channel |
+| `ConcurrentProducers` | 1 | Number of concurrent producer tasks reading from PostgreSQL (NEW) |
 
 ### Tuning Recommendations
 
@@ -81,7 +117,8 @@ PostgreSQL                Channel              MongoDB
   "BatchSize": 2000,
   "MaxDegreeOfParallelism": 8,
   "ConcurrentBatchProcessors": 5,
-  "MaxChannelCapacity": 15
+  "MaxChannelCapacity": 15,
+  "ConcurrentProducers": 3
 }
 ```
 
@@ -91,7 +128,8 @@ PostgreSQL                Channel              MongoDB
   "BatchSize": 1000,
   "MaxDegreeOfParallelism": 4,
   "ConcurrentBatchProcessors": 3,
-  "MaxChannelCapacity": 10
+  "MaxChannelCapacity": 10,
+  "ConcurrentProducers": 2
 }
 ```
 
@@ -101,9 +139,18 @@ PostgreSQL                Channel              MongoDB
   "BatchSize": 500,
   "MaxDegreeOfParallelism": 2,
   "ConcurrentBatchProcessors": 2,
-  "MaxChannelCapacity": 5
+  "MaxChannelCapacity": 5,
+  "ConcurrentProducers": 1
 }
 ```
+
+**Notes on ConcurrentProducers**:
+- **Default**: 1 (single producer, same as before)
+- **Recommended**: 2-3 for most systems
+- **Maximum**: Depends on PostgreSQL's max_connections and load
+- **Consideration**: Each producer creates a database connection
+- **Best for**: Systems with fast network and PostgreSQL that can handle concurrent queries
+- **Not recommended**: If PostgreSQL is already under heavy load or has connection limits
 
 ## How It Works
 
@@ -135,7 +182,49 @@ PostgreSQL                Channel              MongoDB
 
 ### 1. Better Resource Utilization
 - **CPU**: Parallel data conversion + concurrent batch processing
-- **Network**: Overlapping reads from PostgreSQL and writes to MongoDB
+- **Network**: Overlapping reads from PostgreSQL and writes to MongoDB + concurrent PostgreSQL queries
+- **PostgreSQL**: Multiple concurrent queries maximize database throughput
+- **Database Connections**: Multiple active queries from different producers instead of sequential
+
+### 2. Reduced Idle Time
+- While one batch is being written to MongoDB, the next batch is already being read and converted
+- Multiple producers ensure the channel is always fed with data
+- Consumers rarely wait for data when using multiple producers
+- No waiting for I/O operations to complete
+
+### 3. Improved Throughput
+Expected improvements:
+- **Sequential Baseline**: 100% (original performance)
+- **Single Producer + Multiple Consumers**: 130-180% (30-80% faster)
+- **Multiple Producers + Multiple Consumers**: 150-250% (50-150% faster) - NEW!
+- Actual speedup depends on:
+  - Network latency between app and databases
+  - CPU cores available
+  - Database load and response times
+  - PostgreSQL's ability to handle concurrent queries
+  - Number of concurrent producers configured
+
+### 4. Scalability
+- Easily adjust concurrency level based on hardware
+- Can scale up with more powerful servers and databases
+- Independent tuning of producers and consumers
+- Graceful handling of errors and cancellation
+
+## When to Use Concurrent Producers
+
+### Use Multiple Producers (2-3) When:
+✅ PostgreSQL has sufficient CPU and I/O capacity  
+✅ Network bandwidth is high (1Gbps+)  
+✅ PostgreSQL max_connections allows for extra connections  
+✅ Migration needs to complete faster  
+✅ System has adequate CPU cores (4+)
+
+### Use Single Producer (1) When:
+⚠️ PostgreSQL is already under heavy load  
+⚠️ Network latency is high or bandwidth is limited  
+⚠️ PostgreSQL connection pool is limited  
+⚠️ System has limited resources  
+⚠️ Want to minimize PostgreSQL impact during business hours
 - **Database Connections**: Multiple active queries instead of sequential
 
 ### 2. Reduced Idle Time
