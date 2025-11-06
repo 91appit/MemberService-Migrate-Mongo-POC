@@ -54,7 +54,8 @@ public class PostgreSqlRepository
         {
             query = @"
                 SELECT id, password, salt, tenant_id, state, allow_login, 
-                       create_at, create_user, update_at, update_user, version
+                       create_at, create_user, update_at, update_user, version,
+                       extensions, tags, profile, tags_v2
                 FROM members
                 WHERE id > @lastId
                 ORDER BY id
@@ -64,7 +65,8 @@ public class PostgreSqlRepository
         {
             query = @"
                 SELECT id, password, salt, tenant_id, state, allow_login, 
-                       create_at, create_user, update_at, update_user, version
+                       create_at, create_user, update_at, update_user, version,
+                       extensions, tags, profile, tags_v2
                 FROM members
                 ORDER BY id
                 LIMIT @limit";
@@ -81,6 +83,14 @@ public class PostgreSqlRepository
         
         while (await reader.ReadAsync())
         {
+            // Read profile from database
+            JsonDocument? profile = null;
+            if (!reader.IsDBNull(13))
+            {
+                var profileJson = reader.GetString(13);
+                profile = JsonDocument.Parse(profileJson);
+            }
+
             var member = new Member
             {
                 Id = reader.GetGuid(0),
@@ -94,11 +104,14 @@ public class PostgreSqlRepository
                 UpdateAt = reader.GetDateTime(8),
                 UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
                 Version = reader.GetInt32(10),
-                // Use mock data for sensitive fields
-                Extensions = MockDataProvider.GetMemberExtension(),
-                Tags = MockDataProvider.GetMemberTags(),
-                Profile = MockDataProvider.GetMemberProfile(),
-                TagsV2 = MockDataProvider.GetMemberTagsV2()
+                // Read extensions from database or use mock data
+                Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
+                // Read tags from database or use mock data
+                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetValue(12) as string[],
+                // Mask sensitive profile fields
+                Profile = DataMaskingProvider.MaskProfile(profile),
+                // Read tags_v2 from database
+                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
             };
             
             members.Add(member);
@@ -117,7 +130,7 @@ public class PostgreSqlRepository
         if (lastBundleId.HasValue)
         {
             query = @"
-                SELECT id, type, tenant_id, member_id
+                SELECT id, key, type, tenant_id, member_id, extensions
                 FROM bundles
                 WHERE id > @lastId
                 ORDER BY id
@@ -126,7 +139,7 @@ public class PostgreSqlRepository
         else
         {
             query = @"
-                SELECT id, type, tenant_id, member_id
+                SELECT id, key, type, tenant_id, member_id, extensions
                 FROM bundles
                 ORDER BY id
                 LIMIT @limit";
@@ -143,15 +156,33 @@ public class PostgreSqlRepository
         
         while (await reader.ReadAsync())
         {
+            var bundleId = reader.GetInt64(0);
+            var key = reader.GetString(1);
+            var type = reader.GetInt32(2);
+            var tenantId = reader.GetString(3);
+            var memberId = reader.GetGuid(4);
+            
+            // Read extensions from database or use mock data
+            JsonDocument? extensions = null;
+            if (!reader.IsDBNull(5))
+            {
+                var extensionsJson = reader.GetString(5);
+                extensions = JsonDocument.Parse(extensionsJson);
+            }
+            else
+            {
+                extensions = MockDataProvider.GetBundleExtension();
+            }
+
             var bundle = new Bundle
             {
-                Id = reader.GetInt64(0),
-                Type = reader.GetInt32(1),
-                TenantId = reader.GetString(2),
-                MemberId = reader.GetGuid(3),
-                // Use mock data for sensitive fields
-                Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension()
+                Id = bundleId,
+                Type = type,
+                TenantId = tenantId,
+                MemberId = memberId,
+                // Mask key based on bundle type
+                Key = DataMaskingProvider.MaskBundleKey(key, type),
+                Extensions = extensions
             };
             
             bundles.Add(bundle);
@@ -177,7 +208,7 @@ public class PostgreSqlRepository
             CREATE TEMP TABLE temp_member_ids (member_id uuid) ON COMMIT DROP;
             INSERT INTO temp_member_ids (member_id) SELECT unnest(@memberIds);
             
-            SELECT b.id, b.type, b.tenant_id, b.member_id
+            SELECT b.id, b.key, b.type, b.tenant_id, b.member_id, b.extensions
             FROM bundles b
             INNER JOIN temp_member_ids t ON b.member_id = t.member_id
             ORDER BY b.member_id, b.id";
@@ -189,15 +220,33 @@ public class PostgreSqlRepository
         
         while (await reader.ReadAsync())
         {
+            var bundleId = reader.GetInt64(0);
+            var key = reader.GetString(1);
+            var type = reader.GetInt32(2);
+            var tenantId = reader.GetString(3);
+            var memberId = reader.GetGuid(4);
+            
+            // Read extensions from database or use mock data
+            JsonDocument? extensions = null;
+            if (!reader.IsDBNull(5))
+            {
+                var extensionsJson = reader.GetString(5);
+                extensions = JsonDocument.Parse(extensionsJson);
+            }
+            else
+            {
+                extensions = MockDataProvider.GetBundleExtension();
+            }
+
             var bundle = new Bundle
             {
-                Id = reader.GetInt64(0),
-                Type = reader.GetInt32(1),
-                TenantId = reader.GetString(2),
-                MemberId = reader.GetGuid(3),
-                // Use mock data for sensitive fields
-                Key = MockDataProvider.GetBundleKey(),
-                Extensions = MockDataProvider.GetBundleExtension()
+                Id = bundleId,
+                Type = type,
+                TenantId = tenantId,
+                MemberId = memberId,
+                // Mask key based on bundle type
+                Key = DataMaskingProvider.MaskBundleKey(key, type),
+                Extensions = extensions
             };
             
             if (!bundlesByMember.ContainsKey(bundle.MemberId))
