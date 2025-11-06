@@ -3,7 +3,9 @@ using System.Text.Json;
 namespace MemberServiceMigration.Data;
 
 /// <summary>
-/// Provides mock data for sensitive fields to improve query performance and meet security requirements.
+/// Provides fallback mock data for fields that may be missing in the database.
+/// Note: Sensitive fields like bundle keys and member profiles are now fetched from the database
+/// and masked using DataMaskingProvider instead of using mock data.
 /// </summary>
 public static class MockDataProvider
 {
@@ -92,7 +94,9 @@ public static class MockDataProvider
     public static string[] GetMemberTags() => _memberTags;
 
     /// <summary>
-    /// Gets the mock profile data for members.
+    /// Gets the mock profile data for members (fallback only).
+    /// Note: Profile data is now fetched from the database and masked using DataMaskingProvider.
+    /// This method is kept for backward compatibility or fallback scenarios.
     /// </summary>
     public static JsonDocument GetMemberProfile() => _memberProfile.Value;
 
@@ -107,7 +111,10 @@ public static class MockDataProvider
     public static JsonDocument GetBundleExtension() => _bundleExtension.Value;
 
     /// <summary>
-    /// Gets the mock key value for bundles.
+    /// Gets the mock key value for bundles (fallback only - deprecated).
+    /// Note: Bundle keys are now fetched from the database and masked using DataMaskingProvider.
+    /// This method is kept for backward compatibility only.
     /// </summary>
+    [Obsolete("Bundle keys are now fetched from the database. This method is kept for backward compatibility only.")]
     public static string GetBundleKey() => BundleKeyValue;
 }
