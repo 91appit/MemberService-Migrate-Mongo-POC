@@ -423,19 +423,21 @@ public class PostgreSqlRepository
 
         await using var connection = await _dataSource.OpenConnectionAsync();
         
+        // Use a single query with UNION ALL for better performance
+        var queryParts = new List<string>();
         for (int i = 1; i <= numSamples; i++)
         {
-            var offset = i * interval;
-            var query = "SELECT id FROM members ORDER BY id LIMIT 1 OFFSET @offset";
-            
-            await using var command = new NpgsqlCommand(query, connection);
-            command.Parameters.AddWithValue("offset", offset);
-            
-            var result = await command.ExecuteScalarAsync();
-            if (result != null)
-            {
-                samples.Add((Guid)result);
-            }
+            queryParts.Add($"(SELECT id FROM members ORDER BY id LIMIT 1 OFFSET {i * interval})");
+        }
+        
+        var query = string.Join(" UNION ALL ", queryParts);
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            samples.Add(reader.GetGuid(0));
         }
         
         return samples;
@@ -452,19 +454,21 @@ public class PostgreSqlRepository
 
         await using var connection = await _dataSource.OpenConnectionAsync();
         
+        // Use a single query with UNION ALL for better performance
+        var queryParts = new List<string>();
         for (int i = 1; i <= numSamples; i++)
         {
-            var offset = i * interval;
-            var query = "SELECT id FROM bundles ORDER BY id LIMIT 1 OFFSET @offset";
-            
-            await using var command = new NpgsqlCommand(query, connection);
-            command.Parameters.AddWithValue("offset", offset);
-            
-            var result = await command.ExecuteScalarAsync();
-            if (result != null)
-            {
-                samples.Add((long)result);
-            }
+            queryParts.Add($"(SELECT id FROM bundles ORDER BY id LIMIT 1 OFFSET {i * interval})");
+        }
+        
+        var query = string.Join(" UNION ALL ", queryParts);
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            samples.Add(reader.GetInt64(0));
         }
         
         return samples;

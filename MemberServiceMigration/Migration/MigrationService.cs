@@ -925,41 +925,6 @@ public class MigrationService
         return processedCount;
     }
 
-    private List<BundleIdRange> CalculateBundleIdRanges(long? minId, long? maxId, int numProducers)
-    {
-        var ranges = new List<BundleIdRange>();
-        
-        if (!minId.HasValue || !maxId.HasValue || numProducers <= 0)
-        {
-            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
-            return ranges;
-        }
-
-        if (numProducers == 1)
-        {
-            ranges.Add(new BundleIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
-            return ranges;
-        }
-
-        var totalRange = maxId.Value - minId.Value + 1;
-        var rangeSize = totalRange / numProducers;
-        
-        for (int i = 0; i < numProducers; i++)
-        {
-            long? start = i == 0 ? null : minId.Value + (i * rangeSize);
-            long? end = i == numProducers - 1 ? null : minId.Value + ((i + 1) * rangeSize) - 1;
-            
-            ranges.Add(new BundleIdRange
-            {
-                StartId = start,
-                EndId = end,
-                PartitionIndex = i
-            });
-        }
-        
-        return ranges;
-    }
-
     private async Task<List<BundleIdRange>> CalculateBundleIdRangesAsync(int numProducers)
     {
         var ranges = new List<BundleIdRange>();
@@ -1034,7 +999,7 @@ public class MigrationService
         for (int i = 0; i < numProducers; i++)
         {
             Guid? startId = i == 0 ? null : sampleIds[i - 1];
-            Guid? endId = i == numProducers - 1 ? null : sampleIds[i];
+            Guid? endId = i < numProducers - 1 ? sampleIds[i] : null;
             
             ranges.Add(new MemberIdRange
             {
