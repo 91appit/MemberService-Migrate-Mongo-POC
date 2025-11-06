@@ -18,6 +18,8 @@ public class MigrationSettings
     public MigrationMode Mode { get; set; } = MigrationMode.Embedding;
     public int BatchSize { get; set; } = 1000;
     public int MaxDegreeOfParallelism { get; set; } = 4;
+    public int ConcurrentBatchProcessors { get; set; } = 3;
+    public int MaxChannelCapacity { get; set; } = 10;
 }
 
 public enum MigrationMode

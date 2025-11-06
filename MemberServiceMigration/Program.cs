@@ -6,6 +6,8 @@ using MemberServiceMigration.Migration;
 Console.WriteLine("=== Member Service Migration Tool ===");
 Console.WriteLine();
 
+var exitCode = 0;
+
 try
 {
     var configuration = new ConfigurationBuilder()
@@ -22,6 +24,8 @@ try
     Console.WriteLine($"Migration Mode: {appSettings.Migration.Mode}");
     Console.WriteLine($"Batch Size: {appSettings.Migration.BatchSize}");
     Console.WriteLine($"Max Degree of Parallelism: {appSettings.Migration.MaxDegreeOfParallelism}");
+    Console.WriteLine($"Concurrent Batch Processors: {appSettings.Migration.ConcurrentBatchProcessors}");
+    Console.WriteLine($"Max Channel Capacity: {appSettings.Migration.MaxChannelCapacity}");
     Console.WriteLine();
 
     var postgreSqlRepository = new PostgreSqlRepository(appSettings.Database.PostgreSqlConnectionString);
@@ -38,18 +42,16 @@ try
 }
 catch (Exception ex)
 {
+    Console.WriteLine();
     Console.WriteLine($"Error: {ex.Message}");
     Console.WriteLine($"Stack trace: {ex.StackTrace}");
-    Console.WriteLine();
-    Console.WriteLine("Press any key to exit...");
-    Console.ReadKey();
-    return 1;
+    exitCode = 1;
 }
 
 Console.WriteLine();
 Console.WriteLine("Press any key to exit...");
 Console.ReadKey();
-return 0;
+return exitCode;
 
 static string MaskConnectionString(string connectionString)
 {
