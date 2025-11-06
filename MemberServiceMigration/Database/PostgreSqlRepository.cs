@@ -107,7 +107,8 @@ public class PostgreSqlRepository
                 // Read extensions from database or use mock data
                 Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
                 // Read tags from database or use mock data
-                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetValue(12) as string[],
+                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : 
+                       (reader.GetFieldValue<string[]>(12) ?? MockDataProvider.GetMemberTags()),
                 // Mask sensitive profile fields
                 Profile = DataMaskingProvider.MaskProfile(profile),
                 // Read tags_v2 from database
