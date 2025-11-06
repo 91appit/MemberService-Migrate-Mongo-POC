@@ -9,7 +9,23 @@ public class MongoDbRepository
 
     public MongoDbRepository(string connectionString, string databaseName)
     {
-        var client = new MongoClient(connectionString);
+        // Configure MongoDB client settings for concurrent operations and reliability
+        var settings = MongoClientSettings.FromConnectionString(connectionString);
+        
+        // Increase connection pool size to handle concurrent batch processors
+        settings.MaxConnectionPoolSize = 200;
+        settings.MinConnectionPoolSize = 10;
+        
+        // Increase timeouts to prevent premature connection closures during large batch operations
+        settings.ServerSelectionTimeout = TimeSpan.FromSeconds(30);
+        settings.ConnectTimeout = TimeSpan.FromSeconds(30);
+        settings.SocketTimeout = TimeSpan.FromMinutes(5);
+        
+        // Enable retry on network errors
+        settings.RetryWrites = true;
+        settings.RetryReads = true;
+        
+        var client = new MongoClient(settings);
         _database = client.GetDatabase(databaseName);
     }
 
