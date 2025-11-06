@@ -121,7 +121,6 @@ public class MigrationService
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
-        var batchNumber = 0;
         var cancellationTokenSource = new CancellationTokenSource();
         
         // Create a bounded channel for producer-consumer pattern
@@ -138,7 +137,7 @@ public class MigrationService
                 Guid? lastMemberId = null;
                 var currentBatchNumber = 0;
                 
-                while (true)
+                while (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
                     var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
                     
@@ -147,12 +146,13 @@ public class MigrationService
                         break;
                     }
                     
+                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
                     await channel.Writer.WriteAsync(new MemberBatch
                     {
                         Members = membersBatch,
                         LastMemberId = membersBatch.Last().Id,
                         BatchNumber = ++currentBatchNumber
-                    }, cancellationTokenSource.Token);
+                    });
                     
                     lastMemberId = membersBatch.Last().Id;
                 }
@@ -197,16 +197,15 @@ public class MigrationService
                             var options = new InsertManyOptions { IsOrdered = false };
                             await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
                             
+                            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                            
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
-                                batchNumber = batch.BatchNumber;
                                 
-                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
-                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
+                                var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                                 
                                 Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
@@ -255,7 +254,6 @@ public class MigrationService
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
-        var batchNumber = 0;
         var cancellationTokenSource = new CancellationTokenSource();
         
         // Create a bounded channel for producer-consumer pattern
@@ -272,7 +270,7 @@ public class MigrationService
                 long? lastBundleId = null;
                 var currentBatchNumber = 0;
                 
-                while (true)
+                while (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
                     var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
                     
@@ -281,12 +279,13 @@ public class MigrationService
                         break;
                     }
                     
+                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
                     await channel.Writer.WriteAsync(new BundleBatch
                     {
                         Bundles = bundlesBatch,
                         LastBundleId = bundlesBatch.Last().Id,
                         BatchNumber = ++currentBatchNumber
-                    }, cancellationTokenSource.Token);
+                    });
                     
                     lastBundleId = bundlesBatch.Last().Id;
                 }
@@ -334,16 +333,15 @@ public class MigrationService
                         
                         await UpdateMemberBundlesAsync(collection, bundleUpdateDict, cancellationTokenSource.Token);
                         
+                        var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                        
                         lock (lockObject)
                         {
                             processedCount += batch.Bundles.Count;
-                            batchNumber = batch.BatchNumber;
                             
-                            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                             var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                            var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                            var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
-                            var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                            var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
+                            var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                             
                             Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
                             Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
@@ -480,7 +478,6 @@ public class MigrationService
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
-        var batchNumber = 0;
         var cancellationTokenSource = new CancellationTokenSource();
         
         // Create a bounded channel for producer-consumer pattern
@@ -497,7 +494,7 @@ public class MigrationService
                 Guid? lastMemberId = null;
                 var currentBatchNumber = 0;
                 
-                while (true)
+                while (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
                     var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
                     
@@ -506,12 +503,13 @@ public class MigrationService
                         break;
                     }
                     
+                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
                     await channel.Writer.WriteAsync(new MemberBatch
                     {
                         Members = membersBatch,
                         LastMemberId = membersBatch.Last().Id,
                         BatchNumber = ++currentBatchNumber
-                    }, cancellationTokenSource.Token);
+                    });
                     
                     lastMemberId = membersBatch.Last().Id;
                 }
@@ -557,16 +555,15 @@ public class MigrationService
                             var options = new InsertManyOptions { IsOrdered = false };
                             await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
                             
+                            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                            
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
-                                batchNumber = batch.BatchNumber;
                                 
-                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
-                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
+                                var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                                 
                                 Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
@@ -615,7 +612,6 @@ public class MigrationService
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
-        var batchNumber = 0;
         var cancellationTokenSource = new CancellationTokenSource();
         
         // Create a bounded channel for producer-consumer pattern
@@ -632,7 +628,7 @@ public class MigrationService
                 long? lastBundleId = null;
                 var currentBatchNumber = 0;
                 
-                while (true)
+                while (!cancellationTokenSource.Token.IsCancellationRequested)
                 {
                     var bundlesBatch = await _postgreSqlRepository.GetBundlesBatchAsync(lastBundleId, _settings.BatchSize);
                     
@@ -641,12 +637,13 @@ public class MigrationService
                         break;
                     }
                     
+                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
                     await channel.Writer.WriteAsync(new BundleBatch
                     {
                         Bundles = bundlesBatch,
                         LastBundleId = bundlesBatch.Last().Id,
                         BatchNumber = ++currentBatchNumber
-                    }, cancellationTokenSource.Token);
+                    });
                     
                     lastBundleId = bundlesBatch.Last().Id;
                 }
@@ -692,16 +689,15 @@ public class MigrationService
                             var options = new InsertManyOptions { IsOrdered = false };
                             await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
                             
+                            var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
+                            
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
-                                batchNumber = batch.BatchNumber;
                                 
-                                var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
-                                var avgTimePerBatch = batchNumber > 0 ? elapsedTime / batchNumber : batchTime;
-                                var estimatedRemainingBatches = (totalCount - processedCount) / (double)_settings.BatchSize;
-                                var estimatedRemainingTime = avgTimePerBatch * estimatedRemainingBatches;
+                                var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
+                                var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                                 
                                 Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
