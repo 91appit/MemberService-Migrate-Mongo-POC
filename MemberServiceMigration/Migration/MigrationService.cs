@@ -996,6 +996,14 @@ public class MigrationService
         var membersPerProducer = totalMembers / numProducers;
         var sampleIds = await _postgreSqlRepository.GetMemberIdSamplesAsync(numProducers - 1, membersPerProducer);
         
+        // Validate that we got the expected number of samples
+        if (sampleIds.Count != numProducers - 1)
+        {
+            Console.WriteLine($"Warning: Expected {numProducers - 1} sample IDs but got {sampleIds.Count}. Falling back to single producer.");
+            ranges.Add(new MemberIdRange { StartId = null, EndId = null, PartitionIndex = 0 });
+            return ranges;
+        }
+        
         for (int i = 0; i < numProducers; i++)
         {
             Guid? startId = i == 0 ? null : sampleIds[i - 1];
