@@ -448,6 +448,8 @@ public class PostgreSqlRepository
     }
 
     // Get member count by update_at range (useful for analyzing data distribution)
+    // Note: COUNT(*) can be slow on very large tables. For rough estimates on large datasets,
+    // consider using pg_class.reltuples or table statistics instead.
     public async Task<long> GetMembersCountByUpdateAtRangeAsync(DateTime? startUpdateAt, DateTime? endUpdateAt)
     {
         await using var connection = await _dataSource.OpenConnectionAsync();

@@ -188,6 +188,7 @@ public class MigrationService
             boundaries.Sort();
             
             // Create partitions based on custom boundaries
+            var partitionTasks = new List<Task>();
             for (int i = 0; i < boundaries.Count + 1; i++)
             {
                 DateTime startUpdateAt;
@@ -219,10 +220,22 @@ public class MigrationService
                     EndUpdateAt = endUpdateAt
                 };
                 partitions.Add(partition);
-                
-                // Get count for this partition to show data distribution
-                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(startUpdateAt, endUpdateAt);
-                Console.WriteLine($"  Partition {i}: {startUpdateAt:yyyy-MM-dd HH:mm:ss} to {endUpdateAt:yyyy-MM-dd HH:mm:ss} (~{count:N0} members)");
+            }
+            
+            // Get counts for all partitions in parallel to show data distribution
+            var countTasks = partitions.Select(async p =>
+            {
+                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(p.StartUpdateAt, p.EndUpdateAt);
+                return (p.PartitionId, count);
+            }).ToList();
+            
+            var counts = await Task.WhenAll(countTasks);
+            
+            // Display partition information with counts
+            foreach (var (partitionId, count) in counts.OrderBy(c => c.Item1))
+            {
+                var partition = partitions[partitionId];
+                Console.WriteLine($"  Partition {partitionId}: {partition.StartUpdateAt:yyyy-MM-dd HH:mm:ss} to {partition.EndUpdateAt:yyyy-MM-dd HH:mm:ss} (~{count:N0} members)");
             }
         }
         else
