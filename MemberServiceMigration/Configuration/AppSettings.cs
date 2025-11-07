@@ -27,6 +27,14 @@ public class MigrationSettings
     // Parallel query settings
     public int ParallelMemberProducers { get; set; } = 1;
     public int ParallelBundleProducers { get; set; } = 1;
+    
+    // Custom member partition boundaries (optional)
+    // If not specified, partitions will be created by dividing time range evenly
+    // Example: ["2024-01-01", "2025-01-01"] creates 3 partitions:
+    //   Partition 0: min to 2024-01-01
+    //   Partition 1: 2024-01-01 to 2025-01-01
+    //   Partition 2: 2025-01-01 to max
+    public List<string>? MemberPartitionBoundaries { get; set; } = null;
 }
 
 public enum MigrationMode

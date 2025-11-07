@@ -160,29 +160,96 @@ public class MigrationService
         }
 
         var (minUpdateAt, maxUpdateAt) = await _postgreSqlRepository.GetMembersUpdateAtRangeAsync();
-        var totalTimeSpan = maxUpdateAt - minUpdateAt;
-        var partitionTimeSpan = TimeSpan.FromTicks(totalTimeSpan.Ticks / _settings.ParallelMemberProducers);
 
-        Console.WriteLine($"Creating {_settings.ParallelMemberProducers} member partitions based on update_at range:");
+        Console.WriteLine($"Creating member partitions based on update_at range:");
         Console.WriteLine($"  Min update_at: {minUpdateAt:yyyy-MM-dd HH:mm:ss}");
         Console.WriteLine($"  Max update_at: {maxUpdateAt:yyyy-MM-dd HH:mm:ss}");
 
-        for (int i = 0; i < _settings.ParallelMemberProducers; i++)
+        // Check if custom partition boundaries are configured
+        if (_settings.MemberPartitionBoundaries != null && _settings.MemberPartitionBoundaries.Any())
         {
-            var startUpdateAt = minUpdateAt.Add(TimeSpan.FromTicks(partitionTimeSpan.Ticks * i));
-            var endUpdateAt = (i == _settings.ParallelMemberProducers - 1) 
-                ? maxUpdateAt.AddSeconds(1) // Include the last record
-                : minUpdateAt.Add(TimeSpan.FromTicks(partitionTimeSpan.Ticks * (i + 1)));
-
-            var partition = new MemberPartition
-            {
-                PartitionId = i,
-                StartUpdateAt = startUpdateAt,
-                EndUpdateAt = endUpdateAt
-            };
-            partitions.Add(partition);
+            // Use custom boundaries for data-driven partitioning
+            Console.WriteLine($"Using {_settings.MemberPartitionBoundaries.Count + 1} custom partition boundaries");
             
-            Console.WriteLine($"  Partition {i}: {startUpdateAt:yyyy-MM-dd HH:mm:ss} to {endUpdateAt:yyyy-MM-dd HH:mm:ss}");
+            var boundaries = new List<DateTime>();
+            foreach (var boundaryStr in _settings.MemberPartitionBoundaries)
+            {
+                if (DateTime.TryParse(boundaryStr, out var boundary))
+                {
+                    boundaries.Add(boundary);
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Invalid date format in MemberPartitionBoundaries: {boundaryStr}");
+                }
+            }
+            
+            // Sort boundaries to ensure proper ordering
+            boundaries.Sort();
+            
+            // Create partitions based on custom boundaries
+            for (int i = 0; i < boundaries.Count + 1; i++)
+            {
+                DateTime startUpdateAt;
+                DateTime endUpdateAt;
+                
+                if (i == 0)
+                {
+                    // First partition: min to first boundary
+                    startUpdateAt = minUpdateAt;
+                    endUpdateAt = boundaries[0];
+                }
+                else if (i == boundaries.Count)
+                {
+                    // Last partition: last boundary to max
+                    startUpdateAt = boundaries[i - 1];
+                    endUpdateAt = maxUpdateAt.AddSeconds(1); // Include the last record
+                }
+                else
+                {
+                    // Middle partitions: boundary[i-1] to boundary[i]
+                    startUpdateAt = boundaries[i - 1];
+                    endUpdateAt = boundaries[i];
+                }
+                
+                var partition = new MemberPartition
+                {
+                    PartitionId = i,
+                    StartUpdateAt = startUpdateAt,
+                    EndUpdateAt = endUpdateAt
+                };
+                partitions.Add(partition);
+                
+                // Get count for this partition to show data distribution
+                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(startUpdateAt, endUpdateAt);
+                Console.WriteLine($"  Partition {i}: {startUpdateAt:yyyy-MM-dd HH:mm:ss} to {endUpdateAt:yyyy-MM-dd HH:mm:ss} (~{count:N0} members)");
+            }
+        }
+        else
+        {
+            // Use time-based even partitioning (original behavior)
+            Console.WriteLine($"Using {_settings.ParallelMemberProducers} evenly divided time-based partitions");
+            
+            var totalTimeSpan = maxUpdateAt - minUpdateAt;
+            var partitionTimeSpan = TimeSpan.FromTicks(totalTimeSpan.Ticks / _settings.ParallelMemberProducers);
+
+            for (int i = 0; i < _settings.ParallelMemberProducers; i++)
+            {
+                var startUpdateAt = minUpdateAt.Add(TimeSpan.FromTicks(partitionTimeSpan.Ticks * i));
+                var endUpdateAt = (i == _settings.ParallelMemberProducers - 1) 
+                    ? maxUpdateAt.AddSeconds(1) // Include the last record
+                    : minUpdateAt.Add(TimeSpan.FromTicks(partitionTimeSpan.Ticks * (i + 1)));
+
+                var partition = new MemberPartition
+                {
+                    PartitionId = i,
+                    StartUpdateAt = startUpdateAt,
+                    EndUpdateAt = endUpdateAt
+                };
+                partitions.Add(partition);
+                
+                Console.WriteLine($"  Partition {i}: {startUpdateAt:yyyy-MM-dd HH:mm:ss} to {endUpdateAt:yyyy-MM-dd HH:mm:ss}");
+            }
         }
 
         return partitions;
