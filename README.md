@@ -11,9 +11,15 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Two Migration Modes**:
   - **Embedding Mode**: Embeds bundles data directly into member documents
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
+- **Time-Based Partitioning**:
+  - Configure data partitioning based on `update_at` timestamps
+  - Handle uneven data distributions efficiently
+  - Better progress visibility and predictable performance
+  - See [TIME_BASED_PARTITIONING.md](TIME_BASED_PARTITIONING.md) for detailed documentation
 - **Checkpoint and Resume**: 
   - Automatically saves migration progress at configurable intervals
   - Resume from last checkpoint after interruption (manual or accidental)
+  - Tracks partition progress for time-based partitioning
   - No need to restart migration from the beginning
   - See [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md) for detailed documentation
 - **Concurrent Processing Pipeline**:
@@ -24,6 +30,7 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
   - Uses efficient cursor pagination (`id > last_id`) instead of OFFSET/LIMIT
   - Consistent query performance regardless of dataset size or position
   - Leverages primary key indexes for optimal speed
+  - Combined with time-range filters when partitioning is enabled
 - **Batch Processing**: 
   - Configurable batch size for efficient data migration
   - Batch reading from PostgreSQL to handle large datasets (millions of records)
@@ -31,7 +38,7 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Memory Efficient**: Processes data in chunks without loading entire dataset into memory
 - **Index Creation**: Automatically creates appropriate indexes in MongoDB
 - **Data Integrity**: Ensures data consistency during migration
-- **Progress Tracking**: Real-time progress reporting with percentage completion
+- **Progress Tracking**: Real-time progress reporting with percentage completion and partition information
 - **Error Handling**: Comprehensive error handling and logging
 
 ## Project Structure
@@ -114,7 +121,8 @@ Edit `appsettings.json` to configure the application:
     "MaxChannelCapacity": 10,
     "EnableCheckpoint": true,
     "CheckpointFilePath": "migration_checkpoint.json",
-    "CheckpointInterval": 10
+    "CheckpointInterval": 10,
+    "UpdateAtPartitions": ["2024-01-01", "2025-01-01"]  // Optional: time-based partitioning
   }
 }
 ```
@@ -129,8 +137,11 @@ Edit `appsettings.json` to configure the application:
 - **EnableCheckpoint**: Enable/disable checkpoint and resume feature (default: true)
 - **CheckpointFilePath**: Path to checkpoint file (default: "migration_checkpoint.json")
 - **CheckpointInterval**: Save checkpoint every N batches (default: 10)
+- **UpdateAtPartitions**: Optional array of date strings to partition data based on `update_at` field (see [TIME_BASED_PARTITIONING.md](TIME_BASED_PARTITIONING.md))
 
 For detailed information about the checkpoint feature, see [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md).
+
+For information about time-based partitioning for uneven data distributions, see [TIME_BASED_PARTITIONING.md](TIME_BASED_PARTITIONING.md).
 
 See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 
