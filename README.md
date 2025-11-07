@@ -11,6 +11,11 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 - **Two Migration Modes**:
   - **Embedding Mode**: Embeds bundles data directly into member documents
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
+- **Checkpoint and Resume**: 
+  - Automatically saves migration progress at configurable intervals
+  - Resume from last checkpoint after interruption (manual or accidental)
+  - No need to restart migration from the beginning
+  - See [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md) for detailed documentation
 - **Concurrent Processing Pipeline**:
   - Producer-consumer pattern for overlapping I/O operations
   - Configurable number of concurrent batch processors
@@ -106,7 +111,10 @@ Edit `appsettings.json` to configure the application:
     "BatchSize": 1000,
     "MaxDegreeOfParallelism": 4,
     "ConcurrentBatchProcessors": 3,
-    "MaxChannelCapacity": 10
+    "MaxChannelCapacity": 10,
+    "EnableCheckpoint": true,
+    "CheckpointFilePath": "migration_checkpoint.json",
+    "CheckpointInterval": 10
   }
 }
 ```
@@ -118,6 +126,11 @@ Edit `appsettings.json` to configure the application:
 - **MaxDegreeOfParallelism**: Number of parallel threads for data conversion within each batch (default: 4)
 - **ConcurrentBatchProcessors**: Number of concurrent workers processing batches (default: 3)
 - **MaxChannelCapacity**: Maximum number of batches queued in memory (default: 10)
+- **EnableCheckpoint**: Enable/disable checkpoint and resume feature (default: true)
+- **CheckpointFilePath**: Path to checkpoint file (default: "migration_checkpoint.json")
+- **CheckpointInterval**: Save checkpoint every N batches (default: 10)
+
+For detailed information about the checkpoint feature, see [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md).
 
 See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 
