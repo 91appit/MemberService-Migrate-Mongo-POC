@@ -307,9 +307,9 @@ public class MigrationService
                                         LastMemberId = lastProcessedMemberId,
                                         LastBundleId = null,
                                         Timestamp = DateTime.UtcNow,
-                                        Status = "Phase1-MigratingMembers"
+                                        Status = MigrationStatus.Phase1MigratingMembers
                                     };
-                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget - errors logged in service
                                 }
                             }
                         }
@@ -345,7 +345,7 @@ public class MigrationService
                     LastMemberId = lastProcessedMemberId,
                     LastBundleId = null,
                     Timestamp = DateTime.UtcNow,
-                    Status = "Phase1-Completed"
+                    Status = MigrationStatus.Phase1Completed
                 };
                 await _checkpointService.SaveCheckpointAsync(checkpoint);
             }
@@ -474,9 +474,9 @@ public class MigrationService
                                     LastMemberId = null, // Phase 1 already completed
                                     LastBundleId = lastProcessedBundleId,
                                     Timestamp = DateTime.UtcNow,
-                                    Status = "Phase2-MigratingBundles"
+                                    Status = MigrationStatus.Phase2MigratingBundles
                                 };
-                                _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget - errors logged in service
                             }
                         }
                     }
@@ -728,9 +728,9 @@ public class MigrationService
                                         LastMemberId = lastProcessedMemberId,
                                         LastBundleId = null,
                                         Timestamp = DateTime.UtcNow,
-                                        Status = "MigratingMembers"
+                                        Status = MigrationStatus.MigratingMembers
                                     };
-                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget - errors logged in service
                                 }
                             }
                         }
@@ -766,7 +766,7 @@ public class MigrationService
                     LastMemberId = lastProcessedMemberId,
                     LastBundleId = null,
                     Timestamp = DateTime.UtcNow,
-                    Status = "MembersCompleted"
+                    Status = MigrationStatus.MembersCompleted
                 };
                 await _checkpointService.SaveCheckpointAsync(checkpoint);
             }
@@ -893,9 +893,9 @@ public class MigrationService
                                         LastMemberId = null, // Members already completed
                                         LastBundleId = lastProcessedBundleId,
                                         Timestamp = DateTime.UtcNow,
-                                        Status = "MigratingBundles"
+                                        Status = MigrationStatus.MigratingBundles
                                     };
-                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget - errors logged in service
                                 }
                             }
                         }

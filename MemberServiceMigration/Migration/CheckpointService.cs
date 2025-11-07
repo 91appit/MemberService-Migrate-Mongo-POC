@@ -43,7 +43,9 @@ public class CheckpointService
         }
         catch (Exception ex)
         {
+            // Log the error but don't throw - checkpoint save failures shouldn't stop migration
             Console.WriteLine($"Warning: Failed to save checkpoint: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
         }
     }
 
