@@ -122,3 +122,6 @@ $RECYCLE.BIN/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+
+# Migration checkpoint files
+migration_checkpoint.json

@@ -26,6 +26,12 @@ try
     Console.WriteLine($"Max Degree of Parallelism: {appSettings.Migration.MaxDegreeOfParallelism}");
     Console.WriteLine($"Concurrent Batch Processors: {appSettings.Migration.ConcurrentBatchProcessors}");
     Console.WriteLine($"Max Channel Capacity: {appSettings.Migration.MaxChannelCapacity}");
+    Console.WriteLine($"Checkpoint Enabled: {appSettings.Migration.EnableCheckpoint}");
+    if (appSettings.Migration.EnableCheckpoint)
+    {
+        Console.WriteLine($"Checkpoint File: {appSettings.Migration.CheckpointFilePath}");
+        Console.WriteLine($"Checkpoint Interval: Every {appSettings.Migration.CheckpointInterval} batches");
+    }
     Console.WriteLine();
 
     var postgreSqlRepository = new PostgreSqlRepository(appSettings.Database.PostgreSqlConnectionString);
