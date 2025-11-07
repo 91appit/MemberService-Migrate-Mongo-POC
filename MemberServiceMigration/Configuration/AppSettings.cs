@@ -23,6 +23,10 @@ public class MigrationSettings
     public bool EnableCheckpoint { get; set; } = true;
     public string CheckpointFilePath { get; set; } = "migration_checkpoint.json";
     public int CheckpointInterval { get; set; } = 10;
+    
+    // Parallel query settings
+    public int ParallelMemberProducers { get; set; } = 1;
+    public int ParallelBundleProducers { get; set; } = 1;
 }
 
 public enum MigrationMode

@@ -259,4 +259,191 @@ public class PostgreSqlRepository
         
         return bundlesByMember;
     }
+
+    // Methods for parallel query partitioning
+    public async Task<(DateTime minUpdateAt, DateTime maxUpdateAt)> GetMembersUpdateAtRangeAsync()
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        var query = "SELECT MIN(update_at), MAX(update_at) FROM members";
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        await using var reader = await command.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var minUpdateAt = reader.GetDateTime(0);
+            var maxUpdateAt = reader.GetDateTime(1);
+            return (minUpdateAt, maxUpdateAt);
+        }
+        
+        throw new InvalidOperationException("Failed to get members update_at range");
+    }
+
+    public async Task<(long minId, long maxId)> GetBundlesIdRangeAsync()
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        var query = "SELECT MIN(id), MAX(id) FROM bundles";
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        await using var reader = await command.ExecuteReaderAsync();
+        if (await reader.ReadAsync())
+        {
+            var minId = reader.GetInt64(0);
+            var maxId = reader.GetInt64(1);
+            return (minId, maxId);
+        }
+        
+        throw new InvalidOperationException("Failed to get bundles id range");
+    }
+
+    public async Task<List<Member>> GetMembersBatchByUpdateAtRangeAsync(DateTime startUpdateAt, DateTime endUpdateAt, Guid? lastMemberId, int limit)
+    {
+        var members = new List<Member>();
+        
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        string query;
+        if (lastMemberId.HasValue)
+        {
+            query = @"
+                SELECT id, password, salt, tenant_id, state, allow_login, 
+                       create_at, create_user, update_at, update_user, version,
+                       extensions, tags, profile, tags_v2
+                FROM members
+                WHERE update_at >= @startUpdateAt AND update_at < @endUpdateAt
+                  AND id > @lastId
+                ORDER BY id
+                LIMIT @limit";
+        }
+        else
+        {
+            query = @"
+                SELECT id, password, salt, tenant_id, state, allow_login, 
+                       create_at, create_user, update_at, update_user, version,
+                       extensions, tags, profile, tags_v2
+                FROM members
+                WHERE update_at >= @startUpdateAt AND update_at < @endUpdateAt
+                ORDER BY id
+                LIMIT @limit";
+        }
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("startUpdateAt", startUpdateAt);
+        command.Parameters.AddWithValue("endUpdateAt", endUpdateAt);
+        if (lastMemberId.HasValue)
+        {
+            command.Parameters.AddWithValue("lastId", lastMemberId.Value);
+        }
+        command.Parameters.AddWithValue("limit", limit);
+        
+        await using var reader = await command.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            // Read profile from database
+            JsonDocument? profile = null;
+            if (!reader.IsDBNull(13))
+            {
+                var profileJson = reader.GetString(13);
+                profile = JsonDocument.Parse(profileJson);
+            }
+
+            var member = new Member
+            {
+                Id = reader.GetGuid(0),
+                Password = reader.IsDBNull(1) ? null : reader.GetString(1),
+                Salt = reader.IsDBNull(2) ? null : reader.GetString(2),
+                TenantId = reader.GetString(3),
+                State = reader.GetInt32(4),
+                AllowLogin = reader.GetBoolean(5),
+                CreateAt = reader.GetDateTime(6),
+                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+                UpdateAt = reader.GetDateTime(8),
+                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
+                Version = reader.GetInt32(10),
+                Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
+                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetFieldValue<string[]>(12),
+                Profile = DataMaskingProvider.MaskProfile(profile),
+                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
+            };
+            
+            members.Add(member);
+        }
+        
+        return members;
+    }
+
+    public async Task<List<Bundle>> GetBundlesBatchByIdRangeAsync(long startId, long endId, long? lastBundleId, int limit)
+    {
+        var bundles = new List<Bundle>();
+        
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        string query;
+        if (lastBundleId.HasValue)
+        {
+            query = @"
+                SELECT id, key, type, tenant_id, member_id, extensions
+                FROM bundles
+                WHERE id >= @startId AND id < @endId
+                  AND id > @lastId
+                ORDER BY id
+                LIMIT @limit";
+        }
+        else
+        {
+            query = @"
+                SELECT id, key, type, tenant_id, member_id, extensions
+                FROM bundles
+                WHERE id >= @startId AND id < @endId
+                ORDER BY id
+                LIMIT @limit";
+        }
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        command.Parameters.AddWithValue("startId", startId);
+        command.Parameters.AddWithValue("endId", endId);
+        if (lastBundleId.HasValue)
+        {
+            command.Parameters.AddWithValue("lastId", lastBundleId.Value);
+        }
+        command.Parameters.AddWithValue("limit", limit);
+        
+        await using var reader = await command.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            var bundleId = reader.GetInt64(0);
+            var key = reader.GetString(1);
+            var type = reader.GetInt32(2);
+            var tenantId = reader.GetString(3);
+            var memberId = reader.GetGuid(4);
+            
+            JsonDocument? extensions = null;
+            if (!reader.IsDBNull(5))
+            {
+                var extensionsJson = reader.GetString(5);
+                extensions = JsonDocument.Parse(extensionsJson);
+            }
+            else
+            {
+                extensions = MockDataProvider.GetBundleExtension();
+            }
+
+            var bundle = new Bundle
+            {
+                Id = bundleId,
+                Type = type,
+                TenantId = tenantId,
+                MemberId = memberId,
+                Key = DataMaskingProvider.MaskBundleKey(key, type),
+                Extensions = extensions
+            };
+            
+            bundles.Add(bundle);
+        }
+        
+        return bundles;
+    }
 }
