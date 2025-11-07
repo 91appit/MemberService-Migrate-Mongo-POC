@@ -23,6 +23,7 @@ public class MigrationSettings
     public bool EnableCheckpoint { get; set; } = true;
     public string CheckpointFilePath { get; set; } = "migration_checkpoint.json";
     public int CheckpointInterval { get; set; } = 10;
+    public List<string> UpdateAtPartitions { get; set; } = new();
 }
 
 public enum MigrationMode

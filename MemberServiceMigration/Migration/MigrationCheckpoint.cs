@@ -9,6 +9,7 @@ public class MigrationCheckpoint
     public long? LastBundleId { get; set; }
     public DateTime Timestamp { get; set; }
     public string Status { get; set; } = MigrationStatus.InProgress;
+    public int? CurrentPartitionIndex { get; set; }
 }
 
 public static class MigrationStatus

@@ -11,6 +11,7 @@ internal class MemberBatch
     public List<Models.Member> Members { get; set; } = new();
     public Guid? LastMemberId { get; set; }
     public int BatchNumber { get; set; }
+    public int PartitionIndex { get; set; }
 }
 
 internal class BundleBatch
@@ -18,6 +19,14 @@ internal class BundleBatch
     public List<Models.Bundle> Bundles { get; set; } = new();
     public long? LastBundleId { get; set; }
     public int BatchNumber { get; set; }
+}
+
+internal class TimePartition
+{
+    public int Index { get; set; }
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+    public string Description { get; set; } = string.Empty;
 }
 
 public class MigrationService
@@ -50,6 +59,61 @@ public class MigrationService
             Console.WriteLine($"Inner exception: {ex.InnerException.Message}");
         }
         Console.WriteLine($"Full exception details:\n{ex}");
+    }
+
+    private List<TimePartition> BuildPartitions()
+    {
+        var partitions = new List<TimePartition>();
+        
+        if (_settings.UpdateAtPartitions == null || !_settings.UpdateAtPartitions.Any())
+        {
+            // No partitions configured, use single partition for all data
+            partitions.Add(new TimePartition
+            {
+                Index = 0,
+                StartDate = null,
+                EndDate = null,
+                Description = "All data"
+            });
+            return partitions;
+        }
+        
+        var boundaries = _settings.UpdateAtPartitions
+            .Select(s => DateTime.Parse(s))
+            .OrderBy(d => d)
+            .ToList();
+        
+        // First partition: from beginning to first boundary
+        partitions.Add(new TimePartition
+        {
+            Index = 0,
+            StartDate = null,
+            EndDate = boundaries[0],
+            Description = $"<= {boundaries[0]:yyyy-MM-dd}"
+        });
+        
+        // Middle partitions: between boundaries
+        for (int i = 0; i < boundaries.Count - 1; i++)
+        {
+            partitions.Add(new TimePartition
+            {
+                Index = i + 1,
+                StartDate = boundaries[i],
+                EndDate = boundaries[i + 1],
+                Description = $"{boundaries[i]:yyyy-MM-dd} to {boundaries[i + 1]:yyyy-MM-dd}"
+            });
+        }
+        
+        // Last partition: from last boundary to end
+        partitions.Add(new TimePartition
+        {
+            Index = boundaries.Count,
+            StartDate = boundaries[boundaries.Count - 1],
+            EndDate = null,
+            Description = $"> {boundaries[boundaries.Count - 1]:yyyy-MM-dd}"
+        });
+        
+        return partitions;
     }
 
     public async Task MigrateAsync()
@@ -138,6 +202,22 @@ public class MigrationService
         var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
         var totalBundles = await _postgreSqlRepository.GetBundlesCountAsync();
         Console.WriteLine($"Found {totalMembers} members and {totalBundles} bundles to migrate");
+        
+        // Build and display partitions
+        var partitions = BuildPartitions();
+        if (partitions.Count > 1)
+        {
+            Console.WriteLine();
+            Console.WriteLine("=== Time-based Partitioning Enabled ===");
+            Console.WriteLine($"Total partitions: {partitions.Count}");
+            
+            foreach (var partition in partitions)
+            {
+                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(partition.StartDate, partition.EndDate);
+                Console.WriteLine($"Partition {partition.Index}: {partition.Description} - {count:N0} members");
+            }
+            Console.WriteLine();
+        }
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         
@@ -164,15 +244,21 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
         var lastMemberId = checkpoint?.LastMemberId;
         var lastBundleId = checkpoint?.LastBundleId;
+        var currentPartitionIndex = checkpoint?.CurrentPartitionIndex ?? 0;
 
         // Phase 1: Migrate all members first (without bundles for better performance)
         Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
         if (lastMemberId.HasValue)
         {
-            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            Console.WriteLine($"Resuming from Member ID: {lastMemberId}, Partition: {currentPartitionIndex}");
         }
         
-        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
+        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(
+            membersCollection, 
+            totalMembers, 
+            partitions,
+            currentPartitionIndex,
+            lastMemberId);
         
         var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
@@ -203,6 +289,8 @@ public class MigrationService
     private async Task<int> MigrateMembersWithoutBundlesConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection,
         long totalCount,
+        List<TimePartition> partitions,
+        int startPartitionIndex = 0,
         Guid? startFromId = null)
     {
         var processedCount = 0;
@@ -220,27 +308,40 @@ public class MigrationService
         {
             try
             {
-                Guid? lastMemberId = startFromId;
                 var currentBatchNumber = 0;
                 
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
+                // Iterate through partitions starting from the checkpoint partition
+                for (int partitionIdx = startPartitionIndex; partitionIdx < partitions.Count; partitionIdx++)
                 {
-                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                    var partition = partitions[partitionIdx];
+                    Guid? lastMemberId = (partitionIdx == startPartitionIndex) ? startFromId : null;
                     
-                    if (!membersBatch.Any())
+                    Console.WriteLine($"Processing partition {partition.Index}: {partition.Description}");
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
                     {
-                        break;
+                        var membersBatch = await _postgreSqlRepository.GetMembersBatchByUpdateAtRangeAsync(
+                            partition.StartDate, 
+                            partition.EndDate,
+                            lastMemberId, 
+                            _settings.BatchSize);
+                        
+                        if (!membersBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new MemberBatch
+                        {
+                            Members = membersBatch,
+                            LastMemberId = membersBatch.Last().Id,
+                            BatchNumber = ++currentBatchNumber,
+                            PartitionIndex = partitionIdx
+                        });
+                        
+                        lastMemberId = membersBatch.Last().Id;
                     }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new MemberBatch
-                    {
-                        Members = membersBatch,
-                        LastMemberId = membersBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastMemberId = membersBatch.Last().Id;
                 }
                 
                 channel.Writer.Complete();
@@ -257,6 +358,7 @@ public class MigrationService
         var consumerTasks = new List<Task>();
         var lockObject = new object();
         Guid? lastProcessedMemberId = startFromId;
+        int lastProcessedPartitionIndex = startPartitionIndex;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -298,12 +400,13 @@ public class MigrationService
                             {
                                 processedCount += documentsList.Count;
                                 lastProcessedMemberId = batch.LastMemberId;
+                                lastProcessedPartitionIndex = batch.PartitionIndex;
                                 
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                                 var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
                                 var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                                 
-                                Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
+                                Console.WriteLine($"[Member Batch {batch.BatchNumber}, Partition {batch.PartitionIndex}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
                                 
                                 // Save checkpoint periodically
@@ -314,6 +417,7 @@ public class MigrationService
                                         Mode = _settings.Mode,
                                         LastMemberId = lastProcessedMemberId,
                                         LastBundleId = null,
+                                        CurrentPartitionIndex = lastProcessedPartitionIndex,
                                         Timestamp = DateTime.UtcNow,
                                         Status = MigrationStatus.Phase1MigratingMembers
                                     };
@@ -352,6 +456,7 @@ public class MigrationService
                     Mode = _settings.Mode,
                     LastMemberId = lastProcessedMemberId,
                     LastBundleId = null,
+                    CurrentPartitionIndex = lastProcessedPartitionIndex,
                     Timestamp = DateTime.UtcNow,
                     Status = MigrationStatus.Phase1Completed
                 };
@@ -552,6 +657,22 @@ public class MigrationService
         var totalBundles = await _postgreSqlRepository.GetBundlesCountAsync();
         
         Console.WriteLine($"Found {totalMembers} members and {totalBundles} bundles to migrate");
+        
+        // Build and display partitions
+        var partitions = BuildPartitions();
+        if (partitions.Count > 1)
+        {
+            Console.WriteLine();
+            Console.WriteLine("=== Time-based Partitioning Enabled ===");
+            Console.WriteLine($"Total partitions: {partitions.Count}");
+            
+            foreach (var partition in partitions)
+            {
+                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(partition.StartDate, partition.EndDate);
+                Console.WriteLine($"Partition {partition.Index}: {partition.Description} - {count:N0} members");
+            }
+            Console.WriteLine();
+        }
 
         var membersCollection = _mongoDbRepository.GetMembersCollection();
         var bundlesCollection = _mongoDbRepository.GetBundlesCollection();
@@ -592,15 +713,21 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
         var lastMemberId = checkpoint?.LastMemberId;
         var lastBundleId = checkpoint?.LastBundleId;
+        var currentPartitionIndex = checkpoint?.CurrentPartitionIndex ?? 0;
 
         // Migrate members with concurrent processing
         Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
         if (lastMemberId.HasValue)
         {
-            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            Console.WriteLine($"Resuming from Member ID: {lastMemberId}, Partition: {currentPartitionIndex}");
         }
         
-        var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
+        var processedMemberCount = await MigrateMembersConcurrentlyAsync(
+            membersCollection, 
+            totalMembers, 
+            partitions,
+            currentPartitionIndex,
+            lastMemberId);
         
         var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
@@ -631,6 +758,8 @@ public class MigrationService
     private async Task<int> MigrateMembersConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.MemberDocument> collection,
         long totalCount,
+        List<TimePartition> partitions,
+        int startPartitionIndex = 0,
         Guid? startFromId = null)
     {
         var processedCount = 0;
@@ -648,27 +777,40 @@ public class MigrationService
         {
             try
             {
-                Guid? lastMemberId = startFromId;
                 var currentBatchNumber = 0;
                 
-                while (!cancellationTokenSource.Token.IsCancellationRequested)
+                // Iterate through partitions starting from the checkpoint partition
+                for (int partitionIdx = startPartitionIndex; partitionIdx < partitions.Count; partitionIdx++)
                 {
-                    var membersBatch = await _postgreSqlRepository.GetMembersBatchAsync(lastMemberId, _settings.BatchSize);
+                    var partition = partitions[partitionIdx];
+                    Guid? lastMemberId = (partitionIdx == startPartitionIndex) ? startFromId : null;
                     
-                    if (!membersBatch.Any())
+                    Console.WriteLine($"Processing partition {partition.Index}: {partition.Description}");
+                    
+                    while (!cancellationTokenSource.Token.IsCancellationRequested)
                     {
-                        break;
+                        var membersBatch = await _postgreSqlRepository.GetMembersBatchByUpdateAtRangeAsync(
+                            partition.StartDate, 
+                            partition.EndDate,
+                            lastMemberId, 
+                            _settings.BatchSize);
+                        
+                        if (!membersBatch.Any())
+                        {
+                            break;
+                        }
+                        
+                        // Don't pass cancellation token to WriteAsync to ensure proper channel completion
+                        await channel.Writer.WriteAsync(new MemberBatch
+                        {
+                            Members = membersBatch,
+                            LastMemberId = membersBatch.Last().Id,
+                            BatchNumber = ++currentBatchNumber,
+                            PartitionIndex = partitionIdx
+                        });
+                        
+                        lastMemberId = membersBatch.Last().Id;
                     }
-                    
-                    // Don't pass cancellation token to WriteAsync to ensure proper channel completion
-                    await channel.Writer.WriteAsync(new MemberBatch
-                    {
-                        Members = membersBatch,
-                        LastMemberId = membersBatch.Last().Id,
-                        BatchNumber = ++currentBatchNumber
-                    });
-                    
-                    lastMemberId = membersBatch.Last().Id;
                 }
                 
                 channel.Writer.Complete();
@@ -685,6 +827,7 @@ public class MigrationService
         var consumerTasks = new List<Task>();
         var lockObject = new object();
         Guid? lastProcessedMemberId = startFromId;
+        int lastProcessedPartitionIndex = startPartitionIndex;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -727,12 +870,13 @@ public class MigrationService
                             {
                                 processedCount += documentsList.Count;
                                 lastProcessedMemberId = batch.LastMemberId;
+                                lastProcessedPartitionIndex = batch.PartitionIndex;
                                 
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                                 var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
                                 var estimatedRemainingTime = avgTimePerRecord * (totalCount - processedCount);
                                 
-                                Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
+                                Console.WriteLine($"[Member Batch {batch.BatchNumber}, Partition {batch.PartitionIndex}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
                                 
                                 // Save checkpoint periodically
@@ -743,6 +887,7 @@ public class MigrationService
                                         Mode = _settings.Mode,
                                         LastMemberId = lastProcessedMemberId,
                                         LastBundleId = null,
+                                        CurrentPartitionIndex = lastProcessedPartitionIndex,
                                         Timestamp = DateTime.UtcNow,
                                         Status = MigrationStatus.MigratingMembers
                                     };
@@ -781,6 +926,7 @@ public class MigrationService
                     Mode = _settings.Mode,
                     LastMemberId = lastProcessedMemberId,
                     LastBundleId = null,
+                    CurrentPartitionIndex = lastProcessedPartitionIndex,
                     Timestamp = DateTime.UtcNow,
                     Status = MigrationStatus.MembersCompleted
                 };

@@ -120,6 +120,144 @@ public class PostgreSqlRepository
         return members;
     }
 
+    public async Task<List<Member>> GetMembersBatchByUpdateAtRangeAsync(
+        DateTime? startDate,
+        DateTime? endDate,
+        Guid? lastMemberId,
+        int limit)
+    {
+        var members = new List<Member>();
+        
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        var whereConditions = new List<string>();
+        
+        if (startDate.HasValue)
+        {
+            whereConditions.Add("update_at > @startDate");
+        }
+        
+        if (endDate.HasValue)
+        {
+            whereConditions.Add("update_at <= @endDate");
+        }
+        
+        if (lastMemberId.HasValue)
+        {
+            whereConditions.Add("id > @lastId");
+        }
+        
+        var whereClause = whereConditions.Any() 
+            ? "WHERE " + string.Join(" AND ", whereConditions)
+            : "";
+        
+        var query = $@"
+            SELECT id, password, salt, tenant_id, state, allow_login, 
+                   create_at, create_user, update_at, update_user, version,
+                   extensions, tags, profile, tags_v2
+            FROM members
+            {whereClause}
+            ORDER BY id
+            LIMIT @limit";
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        if (startDate.HasValue)
+        {
+            command.Parameters.AddWithValue("startDate", startDate.Value);
+        }
+        
+        if (endDate.HasValue)
+        {
+            command.Parameters.AddWithValue("endDate", endDate.Value);
+        }
+        
+        if (lastMemberId.HasValue)
+        {
+            command.Parameters.AddWithValue("lastId", lastMemberId.Value);
+        }
+        
+        command.Parameters.AddWithValue("limit", limit);
+        
+        await using var reader = await command.ExecuteReaderAsync();
+        
+        while (await reader.ReadAsync())
+        {
+            // Read profile from database
+            JsonDocument? profile = null;
+            if (!reader.IsDBNull(13))
+            {
+                var profileJson = reader.GetString(13);
+                profile = JsonDocument.Parse(profileJson);
+            }
+
+            var member = new Member
+            {
+                Id = reader.GetGuid(0),
+                Password = reader.IsDBNull(1) ? null : reader.GetString(1),
+                Salt = reader.IsDBNull(2) ? null : reader.GetString(2),
+                TenantId = reader.GetString(3),
+                State = reader.GetInt32(4),
+                AllowLogin = reader.GetBoolean(5),
+                CreateAt = reader.GetDateTime(6),
+                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+                UpdateAt = reader.GetDateTime(8),
+                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
+                Version = reader.GetInt32(10),
+                // Read extensions from database or use mock data
+                Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
+                // Read tags from database or use mock data
+                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetFieldValue<string[]>(12),
+                // Mask sensitive profile fields
+                Profile = DataMaskingProvider.MaskProfile(profile),
+                // Read tags_v2 from database
+                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
+            };
+            
+            members.Add(member);
+        }
+        
+        return members;
+    }
+
+    public async Task<long> GetMembersCountByUpdateAtRangeAsync(DateTime? startDate, DateTime? endDate)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        
+        var whereConditions = new List<string>();
+        
+        if (startDate.HasValue)
+        {
+            whereConditions.Add("update_at > @startDate");
+        }
+        
+        if (endDate.HasValue)
+        {
+            whereConditions.Add("update_at <= @endDate");
+        }
+        
+        var whereClause = whereConditions.Any() 
+            ? "WHERE " + string.Join(" AND ", whereConditions)
+            : "";
+        
+        var query = $"SELECT COUNT(*) FROM members {whereClause}";
+        
+        await using var command = new NpgsqlCommand(query, connection);
+        
+        if (startDate.HasValue)
+        {
+            command.Parameters.AddWithValue("startDate", startDate.Value);
+        }
+        
+        if (endDate.HasValue)
+        {
+            command.Parameters.AddWithValue("endDate", endDate.Value);
+        }
+        
+        var result = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(result);
+    }
+
     public async Task<List<Bundle>> GetBundlesBatchAsync(long? lastBundleId, int limit)
     {
         var bundles = new List<Bundle>();
