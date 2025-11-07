@@ -98,9 +98,17 @@ public static class DataMaskingProvider
             var birthdayDict = new Dictionary<string, object?>();
             foreach (var property in birthdayElement.EnumerateObject())
             {
-                if (property.Name == "day" || property.Name == "year" || property.Name == "month")
+                if (property.Name == "day")
                 {
                     birthdayDict[property.Name] = MaskBirthdayField();
+                }
+                else if (property.Name == "month")
+                {
+                    birthdayDict[property.Name] = MaskBirthdayMonthField();
+                }
+                else if (property.Name == "year")
+                {
+                    birthdayDict[property.Name] = MaskBirthdayYearField();
                 }
                 else
                 {
@@ -151,7 +159,17 @@ public static class DataMaskingProvider
     /// </summary>
     private static int MaskBirthdayField()
     {
-        return 0;
+        return 10;
+    }
+
+    private static int MaskBirthdayYearField()
+    {
+        return 1911;
+    }
+
+    private static int MaskBirthdayMonthField()
+    {
+        return 10;
     }
 
     /// <summary>
