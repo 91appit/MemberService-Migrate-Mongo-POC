@@ -221,20 +221,12 @@ public class MigrationService
                 partitions.Add(partition);
             }
             
-            // Get counts for all partitions in parallel to show data distribution
-            var countTasks = partitions.Select(async p =>
+            // Display partition information
+            // Count queries are optional - they can be slow on large tables and may cause connection issues
+            Console.WriteLine($"Displaying partition boundaries (count queries skipped for performance):");
+            foreach (var partition in partitions)
             {
-                var count = await _postgreSqlRepository.GetMembersCountByUpdateAtRangeAsync(p.StartUpdateAt, p.EndUpdateAt);
-                return (p.PartitionId, count);
-            }).ToList();
-            
-            var counts = await Task.WhenAll(countTasks);
-            
-            // Display partition information with counts
-            foreach (var (partitionId, count) in counts.OrderBy(c => c.Item1))
-            {
-                var partition = partitions[partitionId];
-                Console.WriteLine($"  Partition {partitionId}: {partition.StartUpdateAt:yyyy-MM-dd HH:mm:ss} to {partition.EndUpdateAt:yyyy-MM-dd HH:mm:ss} (~{count:N0} members)");
+                Console.WriteLine($"  Partition {partition.PartitionId}: {partition.StartUpdateAt:yyyy-MM-dd HH:mm:ss} to {partition.EndUpdateAt:yyyy-MM-dd HH:mm:ss}");
             }
         }
         else

@@ -446,43 +446,4 @@ public class PostgreSqlRepository
         
         return bundles;
     }
-
-    // Get member count by update_at range (useful for analyzing data distribution)
-    // Note: COUNT(*) can be slow on very large tables. For rough estimates on large datasets,
-    // consider using pg_class.reltuples or table statistics instead.
-    public async Task<long> GetMembersCountByUpdateAtRangeAsync(DateTime? startUpdateAt, DateTime? endUpdateAt)
-    {
-        await using var connection = await _dataSource.OpenConnectionAsync();
-        
-        string query;
-        if (startUpdateAt.HasValue && endUpdateAt.HasValue)
-        {
-            query = "SELECT COUNT(*) FROM members WHERE update_at >= @startUpdateAt AND update_at < @endUpdateAt";
-        }
-        else if (startUpdateAt.HasValue)
-        {
-            query = "SELECT COUNT(*) FROM members WHERE update_at >= @startUpdateAt";
-        }
-        else if (endUpdateAt.HasValue)
-        {
-            query = "SELECT COUNT(*) FROM members WHERE update_at < @endUpdateAt";
-        }
-        else
-        {
-            query = "SELECT COUNT(*) FROM members";
-        }
-        
-        await using var command = new NpgsqlCommand(query, connection);
-        if (startUpdateAt.HasValue)
-        {
-            command.Parameters.AddWithValue("startUpdateAt", startUpdateAt.Value);
-        }
-        if (endUpdateAt.HasValue)
-        {
-            command.Parameters.AddWithValue("endUpdateAt", endUpdateAt.Value);
-        }
-        
-        var result = await command.ExecuteScalarAsync();
-        return Convert.ToInt64(result);
-    }
 }

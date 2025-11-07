@@ -174,24 +174,28 @@ Creating member partitions based on update_at range:
   Min update_at: 2023-01-01 00:00:00
   Max update_at: 2025-12-31 23:59:59
 Using 3 custom partition boundaries
-  Partition 0: 2023-01-01 00:00:00 to 2024-01-01 00:00:00 (~360 members)
-  Partition 1: 2024-01-01 00:00:00 to 2025-01-01 00:00:00 (~71,203,766 members)
-  Partition 2: 2025-01-01 00:00:00 to 2025-12-31 23:59:59 (~48,584,380 members)
+Displaying partition boundaries (count queries skipped for performance):
+  Partition 0: 2023-01-01 00:00:00 to 2024-01-01 00:00:00
+  Partition 1: 2024-01-01 00:00:00 to 2025-01-01 00:00:00
+  Partition 2: 2025-01-01 00:00:00 to 2025-12-31 23:59:59
 
 Using 3 parallel producers for members
 ```
 
+**Note:** Member count queries have been disabled by default to avoid performance issues and connection errors on large tables (100M+ rows). The partition boundaries are displayed to verify configuration correctness.
+
 This helps you verify that:
 1. Boundaries are being applied correctly
-2. Data distribution matches your expectations
-3. Workload is reasonably balanced
+2. Partitions are created as expected
+
+To analyze data distribution before configuring boundaries, use the SQL queries described in the "How to Determine Partition Boundaries" section.
 
 ## Benefits
 
 1. **Balanced Workload**: Distribute work evenly across parallel producers
 2. **Better Performance**: All producers finish at approximately the same time
 3. **Flexibility**: Easily adjust based on your specific data patterns
-4. **Transparency**: See actual member counts per partition in the console output
+4. **No Connection Overhead**: Count queries are skipped to avoid database connection issues on large datasets
 
 ## Limitations
 
