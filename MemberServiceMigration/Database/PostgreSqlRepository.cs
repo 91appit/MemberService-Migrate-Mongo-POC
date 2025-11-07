@@ -10,6 +10,13 @@ public class PostgreSqlRepository
     private readonly string _connectionString;
     private readonly NpgsqlDataSource _dataSource;
 
+    // Common SELECT clause for member queries
+    private const string MemberSelectClause = @"
+        SELECT id, password, salt, tenant_id, state, allow_login, 
+               create_at, create_user, update_at, update_user, version,
+               extensions, tags, profile, tags_v2
+        FROM members";
+
     public PostgreSqlRepository(string connectionString)
     {
         _connectionString = connectionString;
@@ -19,6 +26,40 @@ public class PostgreSqlRepository
         dataSourceBuilder.ConnectionStringBuilder.MaxPoolSize = 100;
         dataSourceBuilder.ConnectionStringBuilder.MinPoolSize = 10;
         _dataSource = dataSourceBuilder.Build();
+    }
+
+    private Member MapReaderToMember(NpgsqlDataReader reader)
+    {
+        // Read profile from database
+        JsonDocument? profile = null;
+        if (!reader.IsDBNull(13))
+        {
+            var profileJson = reader.GetString(13);
+            profile = JsonDocument.Parse(profileJson);
+        }
+
+        return new Member
+        {
+            Id = reader.GetGuid(0),
+            Password = reader.IsDBNull(1) ? null : reader.GetString(1),
+            Salt = reader.IsDBNull(2) ? null : reader.GetString(2),
+            TenantId = reader.GetString(3),
+            State = reader.GetInt32(4),
+            AllowLogin = reader.GetBoolean(5),
+            CreateAt = reader.GetDateTime(6),
+            CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
+            UpdateAt = reader.GetDateTime(8),
+            UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
+            Version = reader.GetInt32(10),
+            // Read extensions from database or use mock data
+            Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
+            // Read tags from database or use mock data
+            Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetFieldValue<string[]>(12),
+            // Mask sensitive profile fields
+            Profile = DataMaskingProvider.MaskProfile(profile),
+            // Read tags_v2 from database
+            TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
+        };
     }
 
     public async Task<long> GetMembersCountAsync()
@@ -52,22 +93,14 @@ public class PostgreSqlRepository
         string query;
         if (lastMemberId.HasValue)
         {
-            query = @"
-                SELECT id, password, salt, tenant_id, state, allow_login, 
-                       create_at, create_user, update_at, update_user, version,
-                       extensions, tags, profile, tags_v2
-                FROM members
+            query = $@"{MemberSelectClause}
                 WHERE id > @lastId
                 ORDER BY id
                 LIMIT @limit";
         }
         else
         {
-            query = @"
-                SELECT id, password, salt, tenant_id, state, allow_login, 
-                       create_at, create_user, update_at, update_user, version,
-                       extensions, tags, profile, tags_v2
-                FROM members
+            query = $@"{MemberSelectClause}
                 ORDER BY id
                 LIMIT @limit";
         }
@@ -83,38 +116,7 @@ public class PostgreSqlRepository
         
         while (await reader.ReadAsync())
         {
-            // Read profile from database
-            JsonDocument? profile = null;
-            if (!reader.IsDBNull(13))
-            {
-                var profileJson = reader.GetString(13);
-                profile = JsonDocument.Parse(profileJson);
-            }
-
-            var member = new Member
-            {
-                Id = reader.GetGuid(0),
-                Password = reader.IsDBNull(1) ? null : reader.GetString(1),
-                Salt = reader.IsDBNull(2) ? null : reader.GetString(2),
-                TenantId = reader.GetString(3),
-                State = reader.GetInt32(4),
-                AllowLogin = reader.GetBoolean(5),
-                CreateAt = reader.GetDateTime(6),
-                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdateAt = reader.GetDateTime(8),
-                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
-                Version = reader.GetInt32(10),
-                // Read extensions from database or use mock data
-                Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
-                // Read tags from database or use mock data
-                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetFieldValue<string[]>(12),
-                // Mask sensitive profile fields
-                Profile = DataMaskingProvider.MaskProfile(profile),
-                // Read tags_v2 from database
-                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
-            };
-            
-            members.Add(member);
+            members.Add(MapReaderToMember(reader));
         }
         
         return members;
@@ -151,11 +153,7 @@ public class PostgreSqlRepository
             ? "WHERE " + string.Join(" AND ", whereConditions)
             : "";
         
-        var query = $@"
-            SELECT id, password, salt, tenant_id, state, allow_login, 
-                   create_at, create_user, update_at, update_user, version,
-                   extensions, tags, profile, tags_v2
-            FROM members
+        var query = $@"{MemberSelectClause}
             {whereClause}
             ORDER BY id
             LIMIT @limit";
@@ -183,38 +181,7 @@ public class PostgreSqlRepository
         
         while (await reader.ReadAsync())
         {
-            // Read profile from database
-            JsonDocument? profile = null;
-            if (!reader.IsDBNull(13))
-            {
-                var profileJson = reader.GetString(13);
-                profile = JsonDocument.Parse(profileJson);
-            }
-
-            var member = new Member
-            {
-                Id = reader.GetGuid(0),
-                Password = reader.IsDBNull(1) ? null : reader.GetString(1),
-                Salt = reader.IsDBNull(2) ? null : reader.GetString(2),
-                TenantId = reader.GetString(3),
-                State = reader.GetInt32(4),
-                AllowLogin = reader.GetBoolean(5),
-                CreateAt = reader.GetDateTime(6),
-                CreateUser = reader.IsDBNull(7) ? null : reader.GetString(7),
-                UpdateAt = reader.GetDateTime(8),
-                UpdateUser = reader.IsDBNull(9) ? null : reader.GetString(9),
-                Version = reader.GetInt32(10),
-                // Read extensions from database or use mock data
-                Extensions = reader.IsDBNull(11) ? MockDataProvider.GetMemberExtension() : JsonDocument.Parse(reader.GetString(11)),
-                // Read tags from database or use mock data
-                Tags = reader.IsDBNull(12) ? MockDataProvider.GetMemberTags() : reader.GetFieldValue<string[]>(12),
-                // Mask sensitive profile fields
-                Profile = DataMaskingProvider.MaskProfile(profile),
-                // Read tags_v2 from database
-                TagsV2 = reader.IsDBNull(14) ? null : JsonDocument.Parse(reader.GetString(14))
-            };
-            
-            members.Add(member);
+            members.Add(MapReaderToMember(reader));
         }
         
         return members;

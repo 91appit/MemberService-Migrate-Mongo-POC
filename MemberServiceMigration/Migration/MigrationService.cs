@@ -78,10 +78,17 @@ public class MigrationService
             return partitions;
         }
         
-        var boundaries = _settings.UpdateAtPartitions
-            .Select(s => DateTime.Parse(s))
-            .OrderBy(d => d)
-            .ToList();
+        var boundaries = new List<DateTime>();
+        foreach (var dateStr in _settings.UpdateAtPartitions)
+        {
+            if (!DateTime.TryParse(dateStr, out var parsedDate))
+            {
+                throw new ArgumentException($"Invalid date format in UpdateAtPartitions: '{dateStr}'. Expected format: yyyy-MM-dd");
+            }
+            boundaries.Add(parsedDate);
+        }
+        
+        boundaries = boundaries.OrderBy(d => d).ToList();
         
         // First partition: from beginning to first boundary
         partitions.Add(new TimePartition
