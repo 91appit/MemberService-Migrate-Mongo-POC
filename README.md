@@ -16,6 +16,12 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
   - Resume from last checkpoint after interruption (manual or accidental)
   - No need to restart migration from the beginning
   - See [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md) for detailed documentation
+- **Parallel Query Processing**:
+  - Multiple concurrent producers reading from different data partitions
+  - Members partitioned by `update_at` timestamp
+  - Bundles partitioned by sequential `id` ranges
+  - Significantly improved database throughput
+  - See [PARALLEL_QUERY.md](PARALLEL_QUERY.md) for detailed documentation
 - **Concurrent Processing Pipeline**:
   - Producer-consumer pattern for overlapping I/O operations
   - Configurable number of concurrent batch processors
@@ -114,7 +120,9 @@ Edit `appsettings.json` to configure the application:
     "MaxChannelCapacity": 10,
     "EnableCheckpoint": true,
     "CheckpointFilePath": "migration_checkpoint.json",
-    "CheckpointInterval": 10
+    "CheckpointInterval": 10,
+    "ParallelMemberProducers": 1,
+    "ParallelBundleProducers": 1
   }
 }
 ```
@@ -129,8 +137,12 @@ Edit `appsettings.json` to configure the application:
 - **EnableCheckpoint**: Enable/disable checkpoint and resume feature (default: true)
 - **CheckpointFilePath**: Path to checkpoint file (default: "migration_checkpoint.json")
 - **CheckpointInterval**: Save checkpoint every N batches (default: 10)
+- **ParallelMemberProducers**: Number of concurrent producers for reading members (default: 1). See [PARALLEL_QUERY.md](PARALLEL_QUERY.md) for details.
+- **ParallelBundleProducers**: Number of concurrent producers for reading bundles (default: 1). See [PARALLEL_QUERY.md](PARALLEL_QUERY.md) for details.
 
 For detailed information about the checkpoint feature, see [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md).
+
+For detailed information about parallel query processing, see [PARALLEL_QUERY.md](PARALLEL_QUERY.md).
 
 See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 
