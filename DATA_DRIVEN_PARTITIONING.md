@@ -174,7 +174,7 @@ Creating member partitions based on update_at range:
   Min update_at: 2023-01-01 00:00:00
   Max update_at: 2025-12-31 23:59:59
 Using 3 custom partition boundaries
-Displaying partition boundaries (count queries skipped for performance):
+Displaying partition boundaries (count queries removed for performance):
   Partition 0: 2023-01-01 00:00:00 to 2024-01-01 00:00:00
   Partition 1: 2024-01-01 00:00:00 to 2025-01-01 00:00:00
   Partition 2: 2025-01-01 00:00:00 to 2025-12-31 23:59:59
@@ -182,7 +182,7 @@ Displaying partition boundaries (count queries skipped for performance):
 Using 3 parallel producers for members
 ```
 
-**Note:** Member count queries have been disabled by default to avoid performance issues and connection errors on large tables (100M+ rows). The partition boundaries are displayed to verify configuration correctness.
+**Note:** Member count queries have been removed entirely to avoid performance issues and connection errors on large tables (100M+ rows). The partition boundaries are displayed to verify configuration correctness. Count queries were causing Npgsql "Exception while reading from stream" errors when run on very large tables.
 
 This helps you verify that:
 1. Boundaries are being applied correctly

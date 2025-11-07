@@ -222,8 +222,8 @@ public class MigrationService
             }
             
             // Display partition information
-            // Count queries are optional - they can be slow on large tables and may cause connection issues
-            Console.WriteLine($"Displaying partition boundaries (count queries skipped for performance):");
+            // Count queries have been removed to avoid performance issues and connection errors on large tables
+            Console.WriteLine($"Displaying partition boundaries (count queries removed for performance):");
             foreach (var partition in partitions)
             {
                 Console.WriteLine($"  Partition {partition.PartitionId}: {partition.StartUpdateAt:yyyy-MM-dd HH:mm:ss} to {partition.EndUpdateAt:yyyy-MM-dd HH:mm:ss}");
