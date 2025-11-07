@@ -25,6 +25,7 @@ public class MigrationService
     private readonly PostgreSqlRepository _postgreSqlRepository;
     private readonly MongoDbRepository _mongoDbRepository;
     private readonly MigrationSettings _settings;
+    private readonly CheckpointService? _checkpointService;
 
     public MigrationService(
         PostgreSqlRepository postgreSqlRepository,
@@ -34,6 +35,11 @@ public class MigrationService
         _postgreSqlRepository = postgreSqlRepository;
         _mongoDbRepository = mongoDbRepository;
         _settings = settings;
+        
+        if (_settings.EnableCheckpoint)
+        {
+            _checkpointService = new CheckpointService(_settings.CheckpointFilePath);
+        }
     }
 
     private static void LogException(Exception ex, string context)
@@ -50,29 +56,82 @@ public class MigrationService
     {
         Console.WriteLine($"Starting migration in {_settings.Mode} mode...");
         Console.WriteLine($"Batch size: {_settings.BatchSize}");
+        Console.WriteLine($"Checkpoint enabled: {_settings.EnableCheckpoint}");
+
+        MigrationCheckpoint? existingCheckpoint = null;
+        
+        if (_checkpointService != null)
+        {
+            existingCheckpoint = await _checkpointService.LoadCheckpointAsync();
+            
+            if (existingCheckpoint != null)
+            {
+                Console.WriteLine();
+                Console.WriteLine("=== Existing Checkpoint Found ===");
+                Console.WriteLine($"Mode: {existingCheckpoint.Mode}");
+                Console.WriteLine($"Last Member ID: {existingCheckpoint.LastMemberId?.ToString() ?? "N/A"}");
+                Console.WriteLine($"Last Bundle ID: {existingCheckpoint.LastBundleId?.ToString() ?? "N/A"}");
+                Console.WriteLine($"Timestamp: {existingCheckpoint.Timestamp:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"Status: {existingCheckpoint.Status}");
+                Console.WriteLine();
+                
+                if (existingCheckpoint.Mode != _settings.Mode)
+                {
+                    Console.WriteLine($"WARNING: Checkpoint mode ({existingCheckpoint.Mode}) differs from current mode ({_settings.Mode})");
+                }
+                
+                Console.Write("Do you want to resume from the checkpoint? (Y/N, default: Y): ");
+                var response = Console.ReadLine()?.Trim().ToUpperInvariant();
+                
+                if (response == "N" || response == "NO")
+                {
+                    Console.WriteLine("Starting fresh migration. Deleting checkpoint...");
+                    _checkpointService.DeleteCheckpoint();
+                    existingCheckpoint = null;
+                }
+                else
+                {
+                    Console.WriteLine("Resuming migration from checkpoint...");
+                }
+                Console.WriteLine();
+            }
+        }
 
         try
         {
             if (_settings.Mode == MigrationMode.Embedding)
             {
-                await MigrateEmbeddingModeAsync();
+                await MigrateEmbeddingModeAsync(existingCheckpoint);
             }
             else
             {
-                await MigrateReferencingModeAsync();
+                await MigrateReferencingModeAsync(existingCheckpoint);
             }
 
             Console.WriteLine("Migration completed successfully!");
+            
+            // Clear checkpoint on successful completion
+            if (_checkpointService != null)
+            {
+                _checkpointService.DeleteCheckpoint();
+                Console.WriteLine("Checkpoint cleared.");
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Migration failed: {ex.Message}");
             Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            
+            if (_checkpointService != null && _settings.EnableCheckpoint)
+            {
+                Console.WriteLine($"Checkpoint saved. You can resume the migration by running again.");
+            }
+            
             throw;
         }
     }
 
-    private async Task MigrateEmbeddingModeAsync()
+    private async Task MigrateEmbeddingModeAsync(MigrationCheckpoint? checkpoint)
     {
         Console.WriteLine("Counting records in PostgreSQL...");
         
@@ -84,7 +143,9 @@ public class MigrationService
         
         // Check if collection already has data
         var existingCount = await membersCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.MemberDocumentEmbedding>.Empty);
-        if (existingCount > 0)
+        
+        // Only drop if not resuming from checkpoint
+        if (existingCount > 0 && checkpoint == null)
         {
             Console.WriteLine($"WARNING: MongoDB collection already contains {existingCount} documents!");
             Console.WriteLine("Dropping existing collection to avoid duplicate key errors...");
@@ -93,24 +154,38 @@ public class MigrationService
             // Re-get the collection reference after dropping
             membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
         }
+        else if (existingCount > 0 && checkpoint != null)
+        {
+            Console.WriteLine($"Resuming migration. MongoDB collection contains {existingCount} documents.");
+        }
         
         Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
         var startTime = DateTime.UtcNow;
+        var lastMemberId = checkpoint?.LastMemberId;
+        var lastBundleId = checkpoint?.LastBundleId;
 
         // Phase 1: Migrate all members first (without bundles for better performance)
         Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
+        if (lastMemberId.HasValue)
+        {
+            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+        }
         
-        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers);
+        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
         
         var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
         // Phase 2: Migrate bundles and update member documents
         Console.WriteLine($"Phase 2: Migrating bundles and updating member documents using {_settings.ConcurrentBatchProcessors} concurrent processors...");
+        if (lastBundleId.HasValue)
+        {
+            Console.WriteLine($"Resuming from Bundle ID: {lastBundleId}");
+        }
         
         var bundlesStartTime = DateTime.UtcNow;
-        var processedBundleCount = await MigrateBundlesAndUpdateMembersConcurrentlyAsync(membersCollection, totalBundles);
+        var processedBundleCount = await MigrateBundlesAndUpdateMembersConcurrentlyAsync(membersCollection, totalBundles, lastBundleId);
         
         var bundlesTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
         Console.WriteLine($"Phase 2 completed in {TimeSpan.FromSeconds(bundlesTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
@@ -127,7 +202,8 @@ public class MigrationService
 
     private async Task<int> MigrateMembersWithoutBundlesConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection,
-        long totalCount)
+        long totalCount,
+        Guid? startFromId = null)
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
@@ -144,7 +220,7 @@ public class MigrationService
         {
             try
             {
-                Guid? lastMemberId = null;
+                Guid? lastMemberId = startFromId;
                 var currentBatchNumber = 0;
                 
                 while (!cancellationTokenSource.Token.IsCancellationRequested)
@@ -180,6 +256,7 @@ public class MigrationService
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
         var lockObject = new object();
+        Guid? lastProcessedMemberId = startFromId;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -212,6 +289,7 @@ public class MigrationService
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
+                                lastProcessedMemberId = batch.LastMemberId;
                                 
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                                 var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
@@ -219,6 +297,20 @@ public class MigrationService
                                 
                                 Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                                
+                                // Save checkpoint periodically
+                                if (_checkpointService != null && batch.BatchNumber % _settings.CheckpointInterval == 0)
+                                {
+                                    var checkpoint = new MigrationCheckpoint
+                                    {
+                                        Mode = _settings.Mode,
+                                        LastMemberId = lastProcessedMemberId,
+                                        LastBundleId = null,
+                                        Timestamp = DateTime.UtcNow,
+                                        Status = "Phase1-MigratingMembers"
+                                    };
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                }
                             }
                         }
                     }
@@ -243,6 +335,20 @@ public class MigrationService
         {
             await producerTask;
             await Task.WhenAll(consumerTasks);
+            
+            // Save final checkpoint after Phase 1 completes
+            if (_checkpointService != null && lastProcessedMemberId.HasValue)
+            {
+                var checkpoint = new MigrationCheckpoint
+                {
+                    Mode = _settings.Mode,
+                    LastMemberId = lastProcessedMemberId,
+                    LastBundleId = null,
+                    Timestamp = DateTime.UtcNow,
+                    Status = "Phase1-Completed"
+                };
+                await _checkpointService.SaveCheckpointAsync(checkpoint);
+            }
         }
         catch (Exception ex)
         {
@@ -260,7 +366,8 @@ public class MigrationService
 
     private async Task<int> MigrateBundlesAndUpdateMembersConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.MemberDocumentEmbedding> collection,
-        long totalCount)
+        long totalCount,
+        long? startFromId = null)
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
@@ -277,7 +384,7 @@ public class MigrationService
         {
             try
             {
-                long? lastBundleId = null;
+                long? lastBundleId = startFromId;
                 var currentBatchNumber = 0;
                 
                 while (!cancellationTokenSource.Token.IsCancellationRequested)
@@ -313,6 +420,7 @@ public class MigrationService
         // Consumer tasks: Process and update member documents
         var consumerTasks = new List<Task>();
         var lockObject = new object();
+        long? lastProcessedBundleId = startFromId;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -348,6 +456,7 @@ public class MigrationService
                         lock (lockObject)
                         {
                             processedCount += batch.Bundles.Count;
+                            lastProcessedBundleId = batch.LastBundleId;
                             
                             var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                             var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
@@ -355,6 +464,20 @@ public class MigrationService
                             
                             Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
                             Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                            
+                            // Save checkpoint periodically
+                            if (_checkpointService != null && batch.BatchNumber % _settings.CheckpointInterval == 0)
+                            {
+                                var checkpoint = new MigrationCheckpoint
+                                {
+                                    Mode = _settings.Mode,
+                                    LastMemberId = null, // Phase 1 already completed
+                                    LastBundleId = lastProcessedBundleId,
+                                    Timestamp = DateTime.UtcNow,
+                                    Status = "Phase2-MigratingBundles"
+                                };
+                                _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                            }
                         }
                     }
                 }
@@ -413,7 +536,7 @@ public class MigrationService
         }
     }
 
-    private async Task MigrateReferencingModeAsync()
+    private async Task MigrateReferencingModeAsync(MigrationCheckpoint? checkpoint)
     {
         Console.WriteLine("Counting records in PostgreSQL...");
         
@@ -429,7 +552,8 @@ public class MigrationService
         var existingMembersCount = await membersCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.MemberDocument>.Empty);
         var existingBundlesCount = await bundlesCollection.CountDocumentsAsync(FilterDefinition<Models.MongoDB.BundleDocument>.Empty);
         
-        if (existingMembersCount > 0 || existingBundlesCount > 0)
+        // Only drop if not resuming from checkpoint
+        if ((existingMembersCount > 0 || existingBundlesCount > 0) && checkpoint == null)
         {
             Console.WriteLine($"WARNING: MongoDB collections already contain data (Members: {existingMembersCount}, Bundles: {existingBundlesCount})!");
             Console.WriteLine("Dropping existing collections to avoid duplicate key errors...");
@@ -450,24 +574,38 @@ public class MigrationService
             membersCollection = _mongoDbRepository.GetMembersCollection();
             bundlesCollection = _mongoDbRepository.GetBundlesCollection();
         }
+        else if ((existingMembersCount > 0 || existingBundlesCount > 0) && checkpoint != null)
+        {
+            Console.WriteLine($"Resuming migration. MongoDB collections contain (Members: {existingMembersCount}, Bundles: {existingBundlesCount}).");
+        }
         
         Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
 
         var startTime = DateTime.UtcNow;
+        var lastMemberId = checkpoint?.LastMemberId;
+        var lastBundleId = checkpoint?.LastBundleId;
 
         // Migrate members with concurrent processing
         Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
+        if (lastMemberId.HasValue)
+        {
+            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+        }
         
-        var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers);
+        var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
         
         var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
 
         // Migrate bundles with concurrent processing
         Console.WriteLine($"Starting concurrent bundles migration with {_settings.ConcurrentBatchProcessors} processors...");
+        if (lastBundleId.HasValue)
+        {
+            Console.WriteLine($"Resuming from Bundle ID: {lastBundleId}");
+        }
         
         var bundlesStartTime = DateTime.UtcNow;
-        var processedBundleCount = await MigrateBundlesConcurrentlyAsync(bundlesCollection, totalBundles);
+        var processedBundleCount = await MigrateBundlesConcurrentlyAsync(bundlesCollection, totalBundles, lastBundleId);
         
         var bundlesMigrationTime = (DateTime.UtcNow - bundlesStartTime).TotalSeconds;
         Console.WriteLine($"Bundles migration completed in {TimeSpan.FromSeconds(bundlesMigrationTime):hh\\:mm\\:ss}: {processedBundleCount} bundles migrated");
@@ -484,7 +622,8 @@ public class MigrationService
 
     private async Task<int> MigrateMembersConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.MemberDocument> collection,
-        long totalCount)
+        long totalCount,
+        Guid? startFromId = null)
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
@@ -501,7 +640,7 @@ public class MigrationService
         {
             try
             {
-                Guid? lastMemberId = null;
+                Guid? lastMemberId = startFromId;
                 var currentBatchNumber = 0;
                 
                 while (!cancellationTokenSource.Token.IsCancellationRequested)
@@ -537,6 +676,7 @@ public class MigrationService
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
         var lockObject = new object();
+        Guid? lastProcessedMemberId = startFromId;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -570,6 +710,7 @@ public class MigrationService
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
+                                lastProcessedMemberId = batch.LastMemberId;
                                 
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                                 var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
@@ -577,6 +718,20 @@ public class MigrationService
                                 
                                 Console.WriteLine($"[Member Batch {batch.BatchNumber}] Processed {batch.Members.Count} members in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} members ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                                
+                                // Save checkpoint periodically
+                                if (_checkpointService != null && batch.BatchNumber % _settings.CheckpointInterval == 0)
+                                {
+                                    var checkpoint = new MigrationCheckpoint
+                                    {
+                                        Mode = _settings.Mode,
+                                        LastMemberId = lastProcessedMemberId,
+                                        LastBundleId = null,
+                                        Timestamp = DateTime.UtcNow,
+                                        Status = "MigratingMembers"
+                                    };
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                }
                             }
                         }
                     }
@@ -601,6 +756,20 @@ public class MigrationService
         {
             await producerTask;
             await Task.WhenAll(consumerTasks);
+            
+            // Save final checkpoint after members migration completes
+            if (_checkpointService != null && lastProcessedMemberId.HasValue)
+            {
+                var checkpoint = new MigrationCheckpoint
+                {
+                    Mode = _settings.Mode,
+                    LastMemberId = lastProcessedMemberId,
+                    LastBundleId = null,
+                    Timestamp = DateTime.UtcNow,
+                    Status = "MembersCompleted"
+                };
+                await _checkpointService.SaveCheckpointAsync(checkpoint);
+            }
         }
         catch (Exception ex)
         {
@@ -618,7 +787,8 @@ public class MigrationService
 
     private async Task<int> MigrateBundlesConcurrentlyAsync(
         IMongoCollection<Models.MongoDB.BundleDocument> collection,
-        long totalCount)
+        long totalCount,
+        long? startFromId = null)
     {
         var processedCount = 0;
         var startTime = DateTime.UtcNow;
@@ -635,7 +805,7 @@ public class MigrationService
         {
             try
             {
-                long? lastBundleId = null;
+                long? lastBundleId = startFromId;
                 var currentBatchNumber = 0;
                 
                 while (!cancellationTokenSource.Token.IsCancellationRequested)
@@ -671,6 +841,7 @@ public class MigrationService
         // Consumer tasks: Process and write batches to MongoDB
         var consumerTasks = new List<Task>();
         var lockObject = new object();
+        long? lastProcessedBundleId = startFromId;
         
         for (int i = 0; i < _settings.ConcurrentBatchProcessors; i++)
         {
@@ -704,6 +875,7 @@ public class MigrationService
                             lock (lockObject)
                             {
                                 processedCount += documentsList.Count;
+                                lastProcessedBundleId = batch.LastBundleId;
                                 
                                 var elapsedTime = (DateTime.UtcNow - startTime).TotalSeconds;
                                 var avgTimePerRecord = processedCount > 0 ? elapsedTime / processedCount : 0;
@@ -711,6 +883,20 @@ public class MigrationService
                                 
                                 Console.WriteLine($"[Bundle Batch {batch.BatchNumber}] Processed {batch.Bundles.Count} bundles in {batchTime:F2}s");
                                 Console.WriteLine($"Progress: {processedCount}/{totalCount} bundles ({(processedCount * 100.0 / totalCount):F2}%) - Est. remaining: {TimeSpan.FromSeconds(estimatedRemainingTime):hh\\:mm\\:ss}");
+                                
+                                // Save checkpoint periodically
+                                if (_checkpointService != null && batch.BatchNumber % _settings.CheckpointInterval == 0)
+                                {
+                                    var checkpoint = new MigrationCheckpoint
+                                    {
+                                        Mode = _settings.Mode,
+                                        LastMemberId = null, // Members already completed
+                                        LastBundleId = lastProcessedBundleId,
+                                        Timestamp = DateTime.UtcNow,
+                                        Status = "MigratingBundles"
+                                    };
+                                    _ = _checkpointService.SaveCheckpointAsync(checkpoint); // Fire and forget
+                                }
                             }
                         }
                     }

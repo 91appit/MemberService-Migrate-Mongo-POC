@@ -20,6 +20,9 @@ public class MigrationSettings
     public int MaxDegreeOfParallelism { get; set; } = 4;
     public int ConcurrentBatchProcessors { get; set; } = 3;
     public int MaxChannelCapacity { get; set; } = 10;
+    public bool EnableCheckpoint { get; set; } = true;
+    public string CheckpointFilePath { get; set; } = "migration_checkpoint.json";
+    public int CheckpointInterval { get; set; } = 10;
 }
 
 public enum MigrationMode
