@@ -188,7 +188,6 @@ public class MigrationService
             boundaries.Sort();
             
             // Create partitions based on custom boundaries
-            var partitionTasks = new List<Task>();
             for (int i = 0; i < boundaries.Count + 1; i++)
             {
                 DateTime startUpdateAt;
