@@ -57,6 +57,20 @@ Configure the checkpoint feature in `appsettings.json`:
   - Lower values save more frequently (more I/O overhead but less data loss on interruption)
   - Higher values save less frequently (less I/O overhead but more data loss on interruption)
 
+### Idempotent Operations
+
+The migration uses **upsert operations** (ReplaceOne with `IsUpsert = true`) instead of insert operations. This ensures that:
+- Documents can be safely re-processed without causing duplicate key errors
+- If migration is interrupted between checkpoints, resuming will update existing documents instead of failing
+- The migration is idempotent - running it multiple times produces the same result
+
+This design handles the scenario where:
+1. Batches 1-9 are migrated successfully
+2. Checkpoint is saved after batch 10
+3. Batches 11-19 are migrated successfully
+4. **Interruption occurs before next checkpoint**
+5. On resume, batches 11-19 are re-processed using upsert (no errors, documents are updated)
+
 ## Usage
 
 ### Starting a Fresh Migration

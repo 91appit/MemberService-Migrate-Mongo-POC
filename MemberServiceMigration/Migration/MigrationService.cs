@@ -281,8 +281,16 @@ public class MigrationService
                         var documentsList = documents.ToList();
                         if (documentsList.Any())
                         {
-                            var options = new InsertManyOptions { IsOrdered = false };
-                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            // Use ReplaceOne with upsert to handle potential duplicates when resuming from checkpoint
+                            var bulkOps = documentsList.Select(doc => 
+                                new ReplaceOneModel<Models.MongoDB.MemberDocumentEmbedding>(
+                                    Builders<Models.MongoDB.MemberDocumentEmbedding>.Filter.Eq(m => m.Id, doc.Id),
+                                    doc)
+                                {
+                                    IsUpsert = true
+                                }).ToList();
+                            
+                            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
                             var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                             
@@ -702,8 +710,16 @@ public class MigrationService
 
                         if (documentsList.Any())
                         {
-                            var options = new InsertManyOptions { IsOrdered = false };
-                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            // Use ReplaceOne with upsert to handle potential duplicates when resuming from checkpoint
+                            var bulkOps = documentsList.Select(doc => 
+                                new ReplaceOneModel<Models.MongoDB.MemberDocument>(
+                                    Builders<Models.MongoDB.MemberDocument>.Filter.Eq(m => m.Id, doc.Id),
+                                    doc)
+                                {
+                                    IsUpsert = true
+                                }).ToList();
+                            
+                            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
                             var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                             
@@ -867,8 +883,16 @@ public class MigrationService
 
                         if (documentsList.Any())
                         {
-                            var options = new InsertManyOptions { IsOrdered = false };
-                            await collection.InsertManyAsync(documentsList, options, cancellationTokenSource.Token);
+                            // Use ReplaceOne with upsert to handle potential duplicates when resuming from checkpoint
+                            var bulkOps = documentsList.Select(doc => 
+                                new ReplaceOneModel<Models.MongoDB.BundleDocument>(
+                                    Builders<Models.MongoDB.BundleDocument>.Filter.Eq(b => b.Id, doc.Id),
+                                    doc)
+                                {
+                                    IsUpsert = true
+                                }).ToList();
+                            
+                            await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
                             var batchTime = (DateTime.UtcNow - batchStartTime).TotalSeconds;
                             
