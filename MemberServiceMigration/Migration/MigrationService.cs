@@ -288,7 +288,7 @@ public class MigrationService
                                     doc)
                                 {
                                     IsUpsert = true
-                                }).ToList();
+                                });
                             
                             await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
@@ -717,7 +717,7 @@ public class MigrationService
                                     doc)
                                 {
                                     IsUpsert = true
-                                }).ToList();
+                                });
                             
                             await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
@@ -890,7 +890,7 @@ public class MigrationService
                                     doc)
                                 {
                                     IsUpsert = true
-                                }).ToList();
+                                });
                             
                             await collection.BulkWriteAsync(bulkOps, new BulkWriteOptions { IsOrdered = false }, cancellationTokenSource.Token);
                             
