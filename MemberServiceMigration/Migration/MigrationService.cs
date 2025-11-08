@@ -326,10 +326,16 @@ public class MigrationService
             Console.WriteLine($"Resuming migration. MongoDB collection contains {existingCount} documents.");
         }
         
-        // Create pre-migration compound index for better query performance
-        Console.WriteLine("Creating pre-migration index (tenant_id, bundles.key, bundles.type)...");
-        await _mongoDbRepository.CreatePreMigrationIndexForEmbeddingAsync();
-        Console.WriteLine("Pre-migration index created successfully.");
+        // Create all indexes before migration for optimal query performance
+        Console.WriteLine("Creating indexes before migration...");
+        Console.WriteLine("  - ix_members_tenant_id (tenant_id)");
+        Console.WriteLine("  - ix_members_update_at (update_at)");
+        Console.WriteLine("  - ix_members_tags (tags)");
+        Console.WriteLine("  - ix_members_tenant_id_bundles_key_type (tenant_id, bundles.key, bundles.type)");
+        var indexStartTime = DateTime.UtcNow;
+        await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
+        var indexTime = (DateTime.UtcNow - indexStartTime).TotalSeconds;
+        Console.WriteLine($"All indexes created successfully in {TimeSpan.FromSeconds(indexTime):hh\\:mm\\:ss}");
         Console.WriteLine();
 
         var startTime = DateTime.UtcNow;
@@ -346,12 +352,6 @@ public class MigrationService
         
         var migrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Migration completed in {TimeSpan.FromSeconds(migrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
-        
-        Console.WriteLine("Creating indexes...");
-        var indexStartTime = DateTime.UtcNow;
-        await _mongoDbRepository.CreateIndexesForEmbeddingAsync();
-        var indexTime = (DateTime.UtcNow - indexStartTime).TotalSeconds;
-        Console.WriteLine($"Indexes created in {TimeSpan.FromSeconds(indexTime):hh\\:mm\\:ss}");
         
         var totalTime = (DateTime.UtcNow - startTime).TotalSeconds;
         Console.WriteLine($"Total migration time: {TimeSpan.FromSeconds(totalTime):hh\\:mm\\:ss}");

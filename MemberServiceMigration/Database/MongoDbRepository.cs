@@ -55,7 +55,7 @@ public class MongoDbRepository
         
         var indexKeys = Builders<MemberDocumentEmbedding>.IndexKeys;
         
-        // Create remaining indexes after migration (compound index already created before migration)
+        // Create all indexes before migration for optimal query performance
         await membersCollection.Indexes.CreateManyAsync(new[]
         {
             new CreateIndexModel<MemberDocumentEmbedding>(
@@ -69,18 +69,7 @@ public class MongoDbRepository
             new CreateIndexModel<MemberDocumentEmbedding>(
                 indexKeys.Ascending(m => m.Tags),
                 new CreateIndexOptions { Name = "ix_members_tags" }
-            )
-        });
-    }
-
-    public async Task CreatePreMigrationIndexForEmbeddingAsync()
-    {
-        var membersCollection = GetMembersEmbeddingCollection();
-        
-        var indexKeys = Builders<MemberDocumentEmbedding>.IndexKeys;
-        
-        // Create compound index: tenant_id, bundles.key, bundles.type (in this order)
-        await membersCollection.Indexes.CreateOneAsync(
+            ),
             new CreateIndexModel<MemberDocumentEmbedding>(
                 indexKeys.Combine(
                     indexKeys.Ascending(m => m.TenantId),
@@ -89,7 +78,7 @@ public class MongoDbRepository
                 ),
                 new CreateIndexOptions { Name = "ix_members_tenant_id_bundles_key_type" }
             )
-        );
+        });
     }
 
     public async Task CreateIndexesForReferencingAsync()
