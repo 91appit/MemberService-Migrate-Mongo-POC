@@ -2,6 +2,8 @@
 
 A .NET 8 Console application for migrating member and bundle data from PostgreSQL to MongoDB with support for both Embedding and Referencing data structure patterns.
 
+> **📖 快速指南**: 如果您想了解 Embedding Mode 最快的搬移方式，請參閱 [EMBEDDING_MODE_MIGRATION_STRATEGY_SUMMARY.md](EMBEDDING_MODE_MIGRATION_STRATEGY_SUMMARY.md) (Traditional Chinese)
+
 ## Background and Motivation
 
 This application is designed to migrate data from a PostgreSQL database to MongoDB to leverage MongoDB's flexible document-based data structure. The migration supports two different data structure patterns to ensure optimal system performance, maintainability, and scalability.
