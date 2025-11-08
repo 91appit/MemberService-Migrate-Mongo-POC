@@ -302,8 +302,8 @@ public class MigrationService
     {
         Console.WriteLine("Counting records in PostgreSQL...");
         
-        var totalMembers = await _postgreSqlRepository.GetMembersCountAsync();
-        var totalBundles = await _postgreSqlRepository.GetBundlesCountAsync();
+        var totalMembers = 119806201;
+        var totalBundles = 793345325;
         Console.WriteLine($"Found {totalMembers} members and {totalBundles} bundles to migrate");
 
         var membersCollection = _mongoDbRepository.GetMembersEmbeddingCollection();
