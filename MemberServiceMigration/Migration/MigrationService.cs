@@ -326,7 +326,11 @@ public class MigrationService
             Console.WriteLine($"Resuming migration. MongoDB collection contains {existingCount} documents.");
         }
         
-        Console.WriteLine("Skipping index creation (will create after migration for better performance)...");
+        // Create pre-migration compound index for better query performance
+        Console.WriteLine("Creating pre-migration index (tenant_id, bundles.key, bundles.type)...");
+        await _mongoDbRepository.CreatePreMigrationIndexForEmbeddingAsync();
+        Console.WriteLine("Pre-migration index created successfully.");
+        Console.WriteLine();
 
         var startTime = DateTime.UtcNow;
         var lastMemberId = checkpoint?.LastMemberId;

@@ -299,9 +299,12 @@ The application automatically creates the following indexes:
 ### Embedding Mode
 
 On `members` collection:
-- `ix_members_tenant_id` on `tenant_id`
-- `ix_members_update_at` on `update_at`
-- `ix_members_tags` on `tags`
+- `ix_members_tenant_id_bundles_key_type` (compound) on `tenant_id`, `bundles.key`, `bundles.type` - **Created before migration**
+- `ix_members_tenant_id` on `tenant_id` - Created after migration
+- `ix_members_update_at` on `update_at` - Created after migration
+- `ix_members_tags` on `tags` - Created after migration
+
+**Note**: The compound index on `tenant_id`, `bundles.key`, `bundles.type` is created before the migration starts to optimize query performance during and after migration.
 
 ### Referencing Mode
 
