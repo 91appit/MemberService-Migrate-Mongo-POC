@@ -110,7 +110,9 @@ Edit `appsettings.json` to configure the application:
   "Database": {
     "PostgreSqlConnectionString": "Host=localhost;Database=memberdb;Username=postgres;Password=postgres",
     "MongoDbConnectionString": "mongodb://localhost:27017",
-    "MongoDbDatabaseName": "memberdb"
+    "MongoDbDatabaseName": "memberdb",
+    "MembersCollectionName": "prod_members",
+    "BundlesCollectionName": "bundles"
   },
   "Migration": {
     "Mode": "Embedding",  // or "Referencing"
@@ -129,6 +131,16 @@ Edit `appsettings.json` to configure the application:
 ```
 
 ### Configuration Parameters
+
+#### Database Settings
+
+- **PostgreSqlConnectionString**: Connection string for PostgreSQL database
+- **MongoDbConnectionString**: Connection string for MongoDB
+- **MongoDbDatabaseName**: Name of the MongoDB database to use
+- **MembersCollectionName**: Name of the MongoDB collection for members (default: "prod_members")
+- **BundlesCollectionName**: Name of the MongoDB collection for bundles in Referencing mode (default: "bundles")
+
+#### Migration Settings
 
 - **Mode**: Migration mode (`Embedding` or `Referencing`)
 - **BatchSize**: Number of records to process per batch (default: 1000)
@@ -286,10 +298,13 @@ The application automatically creates the following indexes:
 
 ### Embedding Mode
 
-On `members` collection:
+On `members` collection (all created **before migration** starts):
+- `ix_members_tenant_id_bundles_key_type` (compound) on `tenant_id`, `bundles.key`, `bundles.type`
 - `ix_members_tenant_id` on `tenant_id`
 - `ix_members_update_at` on `update_at`
 - `ix_members_tags` on `tags`
+
+**Note**: All indexes are created before the migration starts to ensure optimal query performance from the beginning.
 
 ### Referencing Mode
 

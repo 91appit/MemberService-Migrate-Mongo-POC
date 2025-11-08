@@ -11,6 +11,8 @@ public class DatabaseSettings
     public string PostgreSqlConnectionString { get; set; } = string.Empty;
     public string MongoDbConnectionString { get; set; } = string.Empty;
     public string MongoDbDatabaseName { get; set; } = string.Empty;
+    public string MembersCollectionName { get; set; } = "prod_members";
+    public string BundlesCollectionName { get; set; } = "bundles";
 }
 
 public class MigrationSettings

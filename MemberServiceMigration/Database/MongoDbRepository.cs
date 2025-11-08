@@ -6,9 +6,14 @@ namespace MemberServiceMigration.Database;
 public class MongoDbRepository
 {
     private readonly IMongoDatabase _database;
+    private readonly string _membersCollectionName;
+    private readonly string _bundlesCollectionName;
 
-    public MongoDbRepository(string connectionString, string databaseName)
+    public MongoDbRepository(string connectionString, string databaseName, string membersCollectionName = "prod_members", string bundlesCollectionName = "bundles")
     {
+        _membersCollectionName = membersCollectionName;
+        _bundlesCollectionName = bundlesCollectionName;
+        
         // Configure MongoDB client settings for concurrent operations and reliability
         var settings = MongoClientSettings.FromConnectionString(connectionString);
         
@@ -31,17 +36,17 @@ public class MongoDbRepository
 
     public IMongoCollection<MemberDocumentEmbedding> GetMembersEmbeddingCollection()
     {
-        return _database.GetCollection<MemberDocumentEmbedding>("prod_members");
+        return _database.GetCollection<MemberDocumentEmbedding>(_membersCollectionName);
     }
 
     public IMongoCollection<MemberDocument> GetMembersCollection()
     {
-        return _database.GetCollection<MemberDocument>("prod_members");
+        return _database.GetCollection<MemberDocument>(_membersCollectionName);
     }
 
     public IMongoCollection<BundleDocument> GetBundlesCollection()
     {
-        return _database.GetCollection<BundleDocument>("bundles");
+        return _database.GetCollection<BundleDocument>(_bundlesCollectionName);
     }
 
     public async Task CreateIndexesForEmbeddingAsync()
@@ -50,6 +55,7 @@ public class MongoDbRepository
         
         var indexKeys = Builders<MemberDocumentEmbedding>.IndexKeys;
         
+        // Create all indexes before migration for optimal query performance
         await membersCollection.Indexes.CreateManyAsync(new[]
         {
             new CreateIndexModel<MemberDocumentEmbedding>(
@@ -63,6 +69,14 @@ public class MongoDbRepository
             new CreateIndexModel<MemberDocumentEmbedding>(
                 indexKeys.Ascending(m => m.Tags),
                 new CreateIndexOptions { Name = "ix_members_tags" }
+            ),
+            new CreateIndexModel<MemberDocumentEmbedding>(
+                indexKeys.Combine(
+                    indexKeys.Ascending(m => m.TenantId),
+                    indexKeys.Ascending("bundles.key"),
+                    indexKeys.Ascending("bundles.type")
+                ),
+                new CreateIndexOptions { Name = "ix_members_tenant_id_bundles_key_type" }
             )
         });
     }
@@ -114,16 +128,16 @@ public class MongoDbRepository
 
     public async Task DropMembersEmbeddingCollectionAsync()
     {
-        await _database.DropCollectionAsync("prod_members");
+        await _database.DropCollectionAsync(_membersCollectionName);
     }
 
     public async Task DropMembersCollectionAsync()
     {
-        await _database.DropCollectionAsync("prod_members");
+        await _database.DropCollectionAsync(_membersCollectionName);
     }
 
     public async Task DropBundlesCollectionAsync()
     {
-        await _database.DropCollectionAsync("bundles");
+        await _database.DropCollectionAsync(_bundlesCollectionName);
     }
 }

@@ -21,6 +21,8 @@ try
     Console.WriteLine($"PostgreSQL Connection: {MaskConnectionString(appSettings.Database.PostgreSqlConnectionString)}");
     Console.WriteLine($"MongoDB Connection: {MaskConnectionString(appSettings.Database.MongoDbConnectionString)}");
     Console.WriteLine($"MongoDB Database: {appSettings.Database.MongoDbDatabaseName}");
+    Console.WriteLine($"MongoDB Members Collection: {appSettings.Database.MembersCollectionName}");
+    Console.WriteLine($"MongoDB Bundles Collection: {appSettings.Database.BundlesCollectionName}");
     Console.WriteLine($"Migration Mode: {appSettings.Migration.Mode}");
     Console.WriteLine($"Batch Size: {appSettings.Migration.BatchSize}");
     Console.WriteLine($"Max Degree of Parallelism: {appSettings.Migration.MaxDegreeOfParallelism}");
@@ -37,7 +39,9 @@ try
     var postgreSqlRepository = new PostgreSqlRepository(appSettings.Database.PostgreSqlConnectionString);
     var mongoDbRepository = new MongoDbRepository(
         appSettings.Database.MongoDbConnectionString,
-        appSettings.Database.MongoDbDatabaseName);
+        appSettings.Database.MongoDbDatabaseName,
+        appSettings.Database.MembersCollectionName,
+        appSettings.Database.BundlesCollectionName);
 
     var migrationService = new MigrationService(
         postgreSqlRepository,
