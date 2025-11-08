@@ -9,8 +9,9 @@ This application is designed to migrate data from a PostgreSQL database to Mongo
 ## Features
 
 - **Two Migration Modes**:
-  - **Embedding Mode**: Embeds bundles data directly into member documents
+  - **Embedding Mode**: Embeds bundles data directly into member documents using optimized two-phase migration strategy
   - **Referencing Mode**: Maintains separate collections for members and bundles with references
+  - See [EMBEDDING_MODE_OPTIMIZATION_ANALYSIS.md](EMBEDDING_MODE_OPTIMIZATION_ANALYSIS.md) for detailed performance analysis (in Traditional Chinese)
 - **Checkpoint and Resume**: 
   - Automatically saves migration progress at configurable intervals
   - Resume from last checkpoint after interruption (manual or accidental)
@@ -323,7 +324,16 @@ The application includes comprehensive error handling:
 
 ## Performance Optimization
 
-This migration tool has been optimized for large-scale data migrations (millions of records). See [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) for detailed information on:
+This migration tool has been optimized for large-scale data migrations (millions of records). 
+
+**For Embedding Mode users**, see [EMBEDDING_MODE_OPTIMIZATION_ANALYSIS.md](EMBEDDING_MODE_OPTIMIZATION_ANALYSIS.md) (Traditional Chinese) for:
+- Comprehensive analysis of two-phase migration strategy
+- Why it's the fastest approach for Embedding mode
+- Detailed performance characteristics and bottleneck analysis
+- Configuration recommendations for different hardware scenarios
+- Expected performance: ~15-20 minutes for 5M members + 20M bundles
+
+See [PERFORMANCE_OPTIMIZATION.md](PERFORMANCE_OPTIMIZATION.md) for detailed information on:
 
 - Performance bottlenecks and solutions
 - Expected performance improvements (65-70% faster)
@@ -338,10 +348,10 @@ See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for information on:
 - Configuration tuning for concurrent processing
 - Resource utilization improvements
 
-**Expected Performance:**
-- Before: ~3 hours for 5M members + 20M bundles
-- After (with optimizations): ~55-60 minutes for 5M members + 20M bundles
-- After (with concurrent processing): Additional 30-80% improvement depending on hardware
+**Expected Performance (General):**
+- Before optimizations: ~3 hours for 5M members + 20M bundles
+- After optimizations: ~55-60 minutes for 5M members + 20M bundles
+- With two-phase strategy (Embedding mode): ~15-20 minutes for 5M members + 20M bundles
 
 ## Non-Goals
 
