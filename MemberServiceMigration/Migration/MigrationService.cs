@@ -331,18 +331,29 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
         var lastMemberId = checkpoint?.LastMemberId;
         var lastBundleId = checkpoint?.LastBundleId;
+        var checkpointStatus = checkpoint?.Status;
 
         // Phase 1: Migrate all members first (without bundles for better performance)
-        Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
-        if (lastMemberId.HasValue)
+        // Skip Phase 1 if checkpoint indicates it's already completed
+        int processedMemberCount = 0;
+        if (checkpointStatus == MigrationStatus.Phase1Completed || 
+            checkpointStatus == MigrationStatus.Phase2MigratingBundles)
         {
-            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            Console.WriteLine($"Phase 1 already completed (Status: {checkpointStatus}). Skipping to Phase 2...");
         }
-        
-        var processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
-        
-        var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
-        Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+        else
+        {
+            Console.WriteLine($"Phase 1: Migrating members without bundles using {_settings.ConcurrentBatchProcessors} concurrent processors...");
+            if (lastMemberId.HasValue)
+            {
+                Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            }
+            
+            processedMemberCount = await MigrateMembersWithoutBundlesConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
+            
+            var membersTime = (DateTime.UtcNow - startTime).TotalSeconds;
+            Console.WriteLine($"Phase 1 completed in {TimeSpan.FromSeconds(membersTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+        }
 
         // Phase 2: Migrate bundles and update member documents
         Console.WriteLine($"Phase 2: Migrating bundles and updating member documents using {_settings.ConcurrentBatchProcessors} concurrent processors...");
@@ -923,18 +934,29 @@ public class MigrationService
         var startTime = DateTime.UtcNow;
         var lastMemberId = checkpoint?.LastMemberId;
         var lastBundleId = checkpoint?.LastBundleId;
+        var checkpointStatus = checkpoint?.Status;
 
         // Migrate members with concurrent processing
-        Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
-        if (lastMemberId.HasValue)
+        // Skip members migration if checkpoint indicates it's already completed
+        int processedMemberCount = 0;
+        if (checkpointStatus == MigrationStatus.MembersCompleted || 
+            checkpointStatus == MigrationStatus.MigratingBundles)
         {
-            Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            Console.WriteLine($"Members migration already completed (Status: {checkpointStatus}). Skipping to bundles migration...");
         }
-        
-        var processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
-        
-        var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
-        Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+        else
+        {
+            Console.WriteLine($"Starting concurrent members migration with {_settings.ConcurrentBatchProcessors} processors...");
+            if (lastMemberId.HasValue)
+            {
+                Console.WriteLine($"Resuming from Member ID: {lastMemberId}");
+            }
+            
+            processedMemberCount = await MigrateMembersConcurrentlyAsync(membersCollection, totalMembers, lastMemberId);
+            
+            var membersMigrationTime = (DateTime.UtcNow - startTime).TotalSeconds;
+            Console.WriteLine($"Members migration completed in {TimeSpan.FromSeconds(membersMigrationTime):hh\\:mm\\:ss}: {processedMemberCount} members migrated");
+        }
 
         // Migrate bundles with concurrent processing
         Console.WriteLine($"Starting concurrent bundles migration with {_settings.ConcurrentBatchProcessors} processors...");
