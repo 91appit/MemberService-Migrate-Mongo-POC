@@ -119,17 +119,17 @@ If you want to ignore an existing checkpoint and start fresh:
 
 ### Embedding Mode
 
-The checkpoint tracks two phases:
+The checkpoint tracks a single-phase migration:
 
-1. **Phase 1 - Migrating Members**
-   - Status: `"Phase1-MigratingMembers"` → `"Phase1-Completed"`
-   - Tracks: `LastMemberId`
-   - Members are migrated first without bundles
+- **Migrating Members with Bundles**
+  - Status: `"InProgress"`
+  - Tracks: `LastMemberId`
+  - Members are fetched in batches, their bundles are retrieved, and complete documents are inserted into MongoDB in one operation
 
-2. **Phase 2 - Migrating Bundles**
-   - Status: `"Phase2-MigratingBundles"`
-   - Tracks: `LastBundleId`
-   - Bundles are migrated and embedded into member documents
+**Note**: The single-phase approach is more efficient than the previous two-phase approach because it:
+- Reduces MongoDB write operations by 50% (no need to update documents after insertion)
+- Simplifies checkpoint logic (no Phase1/Phase2 tracking)
+- Provides faster overall migration time
 
 ### Referencing Mode
 

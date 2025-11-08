@@ -107,8 +107,23 @@ PostgreSQL                Channel              MongoDB
 
 ## How It Works
 
-### Phase 1: Members Migration (Both Modes)
+### Embedding Mode: Single-Phase Migration
 
+1. **Producer Task**:
+   - Reads member batches from PostgreSQL using cursor pagination
+   - Writes batches to the bounded channel
+   - Completes the channel when all data is read
+
+2. **Consumer Tasks** (N concurrent workers):
+   - Read member batches from the channel
+   - For each batch, fetch associated bundles using `GetBundlesByMemberIdsAsync` (optimized with temp table JOIN)
+   - Convert members with their bundles to complete MongoDB documents in parallel
+   - Write complete documents to MongoDB using unordered bulk inserts (upsert mode for checkpoint resume)
+   - Report progress with detailed timing metrics
+
+### Referencing Mode: Two-Phase Migration
+
+**Phase 1: Members Migration**:
 1. **Producer Task**:
    - Reads member batches from PostgreSQL using cursor pagination
    - Writes batches to the bounded channel
@@ -120,16 +135,9 @@ PostgreSQL                Channel              MongoDB
    - Write to MongoDB using unordered bulk inserts
    - Report progress
 
-### Phase 2: Bundles Migration
-
-**Referencing Mode**:
-- Similar to members migration
-- Reads bundles and writes to separate collection
-
-**Embedding Mode**:
-- Reads bundle batches
-- Groups bundles by member ID
-- Updates member documents using bulk operations
+**Phase 2: Bundles Migration**:
+- Similar to Phase 1
+- Reads bundles and writes to separate bundles collection
 
 ## Benefits
 
