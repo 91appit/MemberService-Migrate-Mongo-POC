@@ -122,7 +122,8 @@ Edit `appsettings.json` to configure the application:
     "CheckpointFilePath": "migration_checkpoint.json",
     "CheckpointInterval": 10,
     "ParallelMemberProducers": 1,
-    "ParallelBundleProducers": 1
+    "ParallelBundleProducers": 1,
+    "MemberPartitionBoundaries": null  // Optional: ["2024-01-01", "2025-01-01"] for custom partitioning
   }
 }
 ```
@@ -139,10 +140,13 @@ Edit `appsettings.json` to configure the application:
 - **CheckpointInterval**: Save checkpoint every N batches (default: 10)
 - **ParallelMemberProducers**: Number of concurrent producers for reading members (default: 1). See [PARALLEL_QUERY.md](PARALLEL_QUERY.md) for details.
 - **ParallelBundleProducers**: Number of concurrent producers for reading bundles (default: 1). See [PARALLEL_QUERY.md](PARALLEL_QUERY.md) for details.
+- **MemberPartitionBoundaries**: Optional array of datetime strings to define custom partition boundaries for members based on data distribution (default: null). See [DATA_DRIVEN_PARTITIONING.md](DATA_DRIVEN_PARTITIONING.md) for details.
 
 For detailed information about the checkpoint feature, see [CHECKPOINT_FEATURE.md](CHECKPOINT_FEATURE.md).
 
 For detailed information about parallel query processing, see [PARALLEL_QUERY.md](PARALLEL_QUERY.md).
+
+For detailed information about data-driven partitioning for uneven data distribution, see [DATA_DRIVEN_PARTITIONING.md](DATA_DRIVEN_PARTITIONING.md).
 
 See [CONCURRENT_PROCESSING.md](CONCURRENT_PROCESSING.md) for detailed tuning recommendations.
 

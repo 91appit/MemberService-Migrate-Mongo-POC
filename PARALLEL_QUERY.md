@@ -16,15 +16,22 @@ The parallel query feature introduces **multiple concurrent producers**, each re
 
 Members are partitioned based on the `update_at` timestamp field:
 
+**Default Behavior (Time-Based Even Partitioning):**
 1. Query `MIN(update_at)` and `MAX(update_at)` from the members table
 2. Divide the timestamp range into N equal partitions (where N = `ParallelMemberProducers`)
 3. Each producer queries a specific time range: `WHERE update_at >= @start AND update_at < @end`
 4. Within each partition, cursor pagination (`id > last_id`) is still used for consistency
 
+**Data-Driven Partitioning (Recommended for Uneven Distribution):**
+
+If your data has uneven distribution (e.g., bulk loads, seasonal patterns), you can specify custom partition boundaries using the `MemberPartitionBoundaries` configuration setting. This allows you to balance the workload based on actual member counts rather than time ranges.
+
+See [DATA_DRIVEN_PARTITIONING.md](DATA_DRIVEN_PARTITIONING.md) for detailed documentation and examples.
+
 **Why `update_at`?**
-- Provides relatively even data distribution across time
 - Indexed field (existing `ix_members_update_at` index)
 - Natural temporal partitioning that reflects data creation patterns
+- Can be customized for uneven distribution using `MemberPartitionBoundaries`
 
 ### Bundles Partitioning (by `id`)
 
@@ -57,7 +64,8 @@ Add the following settings to `appsettings.json`:
     "CheckpointFilePath": "migration_checkpoint.json",
     "CheckpointInterval": 10,
     "ParallelMemberProducers": 3,
-    "ParallelBundleProducers": 4
+    "ParallelBundleProducers": 4,
+    "MemberPartitionBoundaries": null
   }
 }
 ```
@@ -68,6 +76,7 @@ Add the following settings to `appsettings.json`:
 |-----------|---------|-------------|
 | `ParallelMemberProducers` | 1 | Number of concurrent producers for reading members. Set to 1 to disable parallel queries. |
 | `ParallelBundleProducers` | 1 | Number of concurrent producers for reading bundles. Set to 1 to disable parallel queries. |
+| `MemberPartitionBoundaries` | null | Optional array of datetime strings to define custom partition boundaries for members. When specified, overrides even time-based partitioning. See [DATA_DRIVEN_PARTITIONING.md](DATA_DRIVEN_PARTITIONING.md) for details. |
 
 **Note:** When set to 1, the system behaves exactly like the original single-producer implementation.
 
