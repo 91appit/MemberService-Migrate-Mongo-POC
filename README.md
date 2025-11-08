@@ -110,7 +110,9 @@ Edit `appsettings.json` to configure the application:
   "Database": {
     "PostgreSqlConnectionString": "Host=localhost;Database=memberdb;Username=postgres;Password=postgres",
     "MongoDbConnectionString": "mongodb://localhost:27017",
-    "MongoDbDatabaseName": "memberdb"
+    "MongoDbDatabaseName": "memberdb",
+    "MembersCollectionName": "prod_members",
+    "BundlesCollectionName": "bundles"
   },
   "Migration": {
     "Mode": "Embedding",  // or "Referencing"
@@ -129,6 +131,16 @@ Edit `appsettings.json` to configure the application:
 ```
 
 ### Configuration Parameters
+
+#### Database Settings
+
+- **PostgreSqlConnectionString**: Connection string for PostgreSQL database
+- **MongoDbConnectionString**: Connection string for MongoDB
+- **MongoDbDatabaseName**: Name of the MongoDB database to use
+- **MembersCollectionName**: Name of the MongoDB collection for members (default: "prod_members")
+- **BundlesCollectionName**: Name of the MongoDB collection for bundles in Referencing mode (default: "bundles")
+
+#### Migration Settings
 
 - **Mode**: Migration mode (`Embedding` or `Referencing`)
 - **BatchSize**: Number of records to process per batch (default: 1000)
